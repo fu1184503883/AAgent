@@ -1,0 +1,1299 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AAGNet 加工特征识别 · 演示</title>
+<style>
+:root{
+  --bg:#070b14; --bg2:#0b1220; --panel:#0e1626; --panel2:#121c2e;
+  --line:#1e2b42; --line2:#26364f;
+  --txt:#e8eef8; --txt2:#9fb0c9; --txt3:#6c7f9b;
+  --accent:#37c4f0; --accent2:#5eead4; --warn:#fbbf24; --ok:#34d399;
+  --cls-hole:#38bdf8; --cls-blind:#a78bfa; --cls-pocket:#fbbf24;
+  --cls-slot:#34d399; --cls-step:#60a5fa; --cls-stock:#5b6b80;
+  --mono:"JetBrains Mono","Cascadia Mono",Consolas,"Courier New",monospace;
+  --sans:"Microsoft YaHei UI","Microsoft YaHei","Segoe UI",system-ui,sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; font-family:var(--sans); color:var(--txt); overflow:hidden;
+  background:
+    radial-gradient(1200px 700px at 22% 0%, #12203a 0%, transparent 60%),
+    radial-gradient(900px 600px at 85% 100%, #0d1b2c 0%, transparent 55%),
+    var(--bg);
+}
+button{font-family:inherit}
+.app{display:flex; flex-direction:column; height:100vh; min-height:640px}
+
+/* ---------------- header ---------------- */
+.topbar{
+  display:flex; align-items:center; gap:18px; padding:12px 18px;
+  border-bottom:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(18,28,46,.92), rgba(11,18,32,.72));
+  backdrop-filter:blur(6px);
+}
+.brand{display:flex; align-items:center; gap:12px; min-width:0}
+.logo{
+  width:34px;height:34px;border-radius:9px;position:relative;flex:none;
+  background:conic-gradient(from 210deg,#37c4f0,#5eead4,#37c4f0);
+  box-shadow:0 0 0 1px rgba(90,200,240,.35), 0 6px 18px rgba(30,120,180,.35);
+}
+.logo:after{
+  content:"";position:absolute;inset:3px;border-radius:6px;
+  background:radial-gradient(circle at 35% 30%, #0c1626, #0a1220 70%);
+  box-shadow:inset 0 0 0 1px rgba(120,200,240,.25);
+}
+.logo span{
+  position:absolute; inset:0; display:grid; place-items:center;
+  font:700 11px/1 var(--mono); color:#9fe8ff; letter-spacing:.5px; z-index:2;
+}
+.brand h1{font-size:15.5px; margin:0; font-weight:650; letter-spacing:.2px; white-space:nowrap}
+.brand h1 em{font-style:normal; color:var(--accent); font-weight:600}
+.brand p{margin:2px 0 0; font-size:11.5px; color:var(--txt3); letter-spacing:.3px; white-space:nowrap}
+
+.parts{display:flex; gap:6px; align-items:center; margin-left:6px}
+.parts .lab{font-size:11px; color:var(--txt3); margin-right:2px}
+.chip{
+  border:1px solid var(--line2); background:#0c1524; color:var(--txt2);
+  padding:6px 11px; border-radius:8px; cursor:pointer; font-size:12px;
+  transition:.18s; display:flex; gap:7px; align-items:center;
+}
+.chip:hover{border-color:#31526f; color:var(--txt)}
+.chip.on{background:linear-gradient(180deg,#123049,#0e2138); border-color:#2b7f9f; color:#d8f6ff; box-shadow:0 0 0 1px rgba(55,196,240,.25) inset}
+.chip b{font:600 11px/1 var(--mono); color:var(--txt3)}
+.chip.on b{color:var(--accent)}
+
+.spacer{flex:1}
+.tools{display:flex; align-items:center; gap:8px}
+.btn{
+  border:1px solid var(--line2); background:#0d1727; color:var(--txt);
+  padding:8px 13px; border-radius:9px; font-size:12.5px; cursor:pointer;
+  display:flex; align-items:center; gap:8px; transition:.18s; white-space:nowrap;
+}
+.btn:hover{border-color:#33566f; background:#11203a}
+.btn.primary{
+  border-color:#2b8fb2; color:#eafaff;
+  background:linear-gradient(180deg,#1a6a8c,#124e6a);
+  box-shadow:0 6px 18px rgba(20,110,150,.35), inset 0 1px 0 rgba(255,255,255,.12);
+}
+.btn.primary:hover{background:linear-gradient(180deg,#1f7ba1,#155a79)}
+.btn .dot{width:6px;height:6px;border-radius:50%;background:var(--accent2); box-shadow:0 0 8px var(--accent2)}
+.btn[disabled]{opacity:.45; cursor:not-allowed}
+.badge{
+  font-size:11px; color:#ffdca8; border:1px solid #5a4620; background:#231a0c;
+  padding:5px 9px; border-radius:7px; display:flex; gap:6px; align-items:center;
+  cursor:help;
+}
+.badge .q{width:13px;height:13px;border-radius:50%;background:#5a4620;color:#ffdca8;
+  display:grid;place-items:center;font:600 9px/1 var(--mono)}
+
+/* ---------------- layout ---------------- */
+.main{display:flex; flex:1; min-height:0}
+.rail{
+  width:272px; flex:none; border-right:1px solid var(--line);
+  background:linear-gradient(180deg, rgba(14,22,38,.94), rgba(10,16,28,.94));
+  overflow:auto; padding:14px 13px 18px; display:flex; flex-direction:column; gap:14px;
+}
+.rail.right{width:392px; border-right:none; border-left:1px solid var(--line); padding:0; gap:0}
+.sec-title{
+  display:flex; align-items:center; justify-content:space-between;
+  font-size:11px; color:var(--txt3); letter-spacing:1.2px; text-transform:uppercase;
+  margin-bottom:9px;
+}
+.sec-title b{color:var(--txt2); font-weight:600; letter-spacing:.6px}
+.card{
+  border:1px solid var(--line); background:linear-gradient(180deg,#0f1829,#0c1420);
+  border-radius:12px; padding:12px;
+}
+.kv{display:grid; grid-template-columns:auto 1fr; gap:6px 10px; font-size:12px}
+.kv dt{color:var(--txt3)}
+.kv dd{margin:0; color:var(--txt2); font-family:var(--mono); font-size:11.5px; text-align:right}
+.kv dd.hi{color:var(--accent)}
+
+/* pipeline */
+.steps{display:flex; flex-direction:column; gap:2px}
+.step{display:grid; grid-template-columns:18px 1fr auto; gap:9px; align-items:start; padding:7px 2px; border-radius:8px}
+.step .ic{width:18px;height:18px;border-radius:50%;border:1px solid var(--line2); background:#0a1120;
+  display:grid; place-items:center; font:600 10px/1 var(--mono); color:var(--txt3); position:relative}
+.step .tx b{display:block; font-size:12.5px; font-weight:600; color:var(--txt2)}
+.step .tx span{display:block; font-size:10.5px; color:var(--txt3); margin-top:2px; line-height:1.35}
+.step .ms{font:11px var(--mono); color:var(--txt3); padding-top:2px}
+.step.run .ic{border-color:var(--accent); color:#bff1ff; box-shadow:0 0 0 3px rgba(55,196,240,.12)}
+.step.run .tx b{color:var(--txt)}
+.step.done .ic{background:#0d2b22; border-color:#1e6b52; color:#8df0c8}
+.step.done .ms{color:#8df0c8}
+.bar{height:3px;border-radius:2px;background:#101b2b;overflow:hidden;margin-top:9px;position:relative}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#37c4f0,#5eead4);transition:width .25s}
+
+/* gAAG panel */
+.graphwrap{position:relative}
+#graph{width:100%; height:206px; display:block; border-radius:10px; background:
+  radial-gradient(120% 120% at 50% 30%, #0e1a2c, #0a121f 70%);
+  border:1px solid var(--line); cursor:crosshair}
+.gtip{
+  position:absolute; pointer-events:none; font:11px/1.4 var(--mono);
+  background:#0b1526; border:1px solid var(--line2); color:var(--txt2);
+  padding:4px 7px; border-radius:6px; transform:translate(-50%,-130%); opacity:0; transition:opacity .15s;
+  white-space:nowrap; z-index:5;
+}
+
+/* ---------------- viewer ---------------- */
+.viewer{flex:1; position:relative; min-width:0; background:
+  radial-gradient(90% 80% at 50% 10%, #16233c 0%, #0a1120 55%, #060a12 100%);}
+#gl{width:100%; height:100%; display:block}
+.vgrid{position:absolute; inset:0; pointer-events:none; opacity:.55;
+  background-image:
+    linear-gradient(rgba(90,130,180,.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(90,130,180,.055) 1px, transparent 1px);
+  background-size:46px 46px;
+  mask-image:radial-gradient(78% 70% at 50% 45%, #000 30%, transparent 100%);
+}
+.vtop{position:absolute; top:14px; left:16px; right:16px; display:flex; gap:10px; align-items:flex-start; pointer-events:none}
+.seg{
+  display:flex; padding:3px; gap:3px; border-radius:10px; border:1px solid var(--line2);
+  background:rgba(10,17,28,.82); backdrop-filter:blur(8px); pointer-events:auto;
+}
+.seg button{
+  border:0; background:transparent; color:var(--txt3); font-size:12px; padding:6px 11px;
+  border-radius:7px; cursor:pointer; transition:.15s; white-space:nowrap;
+}
+.seg button.on{background:linear-gradient(180deg,#17344e,#102338); color:#d6f4ff; box-shadow:0 0 0 1px rgba(55,196,240,.3) inset}
+.seg button:hover{color:var(--txt)}
+.vbtns{display:flex; gap:6px; margin-left:auto; pointer-events:auto}
+.iconbtn{
+  width:32px;height:32px;border-radius:9px;border:1px solid var(--line2);
+  background:rgba(10,17,28,.82); color:var(--txt2); cursor:pointer; display:grid; place-items:center;
+  font:11px var(--mono); backdrop-filter:blur(8px); transition:.15s;
+}
+.iconbtn:hover{border-color:#35576f; color:var(--txt)}
+.iconbtn.on{border-color:#2b7f9f; color:#bff1ff}
+.legend{
+  position:absolute; left:16px; bottom:16px; display:flex; flex-direction:column; gap:5px;
+  padding:10px 12px; border-radius:11px; border:1px solid var(--line2);
+  background:rgba(9,15,26,.86); backdrop-filter:blur(8px); pointer-events:auto;
+}
+.legend .row{display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--txt2); cursor:pointer; padding:1px 0}
+.legend .row.off{opacity:.38}
+.legend .sw{width:9px;height:9px;border-radius:3px;flex:none}
+.legend .n{margin-left:auto; font:10.5px var(--mono); color:var(--txt3)}
+.hud{
+  position:absolute; right:16px; bottom:16px; min-width:214px; padding:10px 12px;
+  border-radius:11px; border:1px solid var(--line2); background:rgba(9,15,26,.88);
+  backdrop-filter:blur(8px); font-size:11.5px; color:var(--txt2);
+}
+.hud h4{margin:0 0 7px; font:600 11px var(--mono); color:var(--accent); letter-spacing:.6px}
+.hud .line{display:flex; justify-content:space-between; gap:10px; padding:2px 0}
+.hud .line span:last-child{font-family:var(--mono); color:var(--txt)}
+.hint{
+  position:absolute; left:50%; top:64px; transform:translateX(-50%);
+  font-size:11px; color:var(--txt3); letter-spacing:.3px; pointer-events:none;
+  background:rgba(8,13,22,.6); border:1px solid rgba(40,60,90,.5); padding:5px 10px; border-radius:20px;
+  transition:opacity .4s;
+}
+.scan{
+  position:absolute; inset:0; pointer-events:none; opacity:0;
+  background:linear-gradient(180deg, transparent 0%, rgba(55,196,240,.10) 45%, rgba(55,196,240,.22) 50%, rgba(55,196,240,.10) 55%, transparent 100%);
+  transition:opacity .2s;
+}
+.scan.on{opacity:1; animation:scanmove 1.4s linear infinite}
+@keyframes scanmove{from{transform:translateY(-40%)}to{transform:translateY(40%)}}
+
+/* ---------------- right panel ---------------- */
+.tabs{display:flex; gap:2px; padding:10px 12px 0; border-bottom:1px solid var(--line); background:#0b1322}
+.tabs button{
+  flex:1; border:0; background:transparent; color:var(--txt3); font-size:12.5px; padding:9px 4px 10px;
+  cursor:pointer; position:relative; border-radius:8px 8px 0 0;
+}
+.tabs button.on{color:var(--txt); background:linear-gradient(180deg,rgba(30,52,80,.55),transparent)}
+.tabs button.on:after{content:""; position:absolute; left:18%; right:18%; bottom:-1px; height:2px;
+  background:linear-gradient(90deg,#37c4f0,#5eead4); border-radius:2px}
+.pane{flex:1; min-height:0; overflow:auto; padding:12px 12px 26px; display:none; flex-direction:column; gap:9px}
+.pane.on{display:flex}
+.pane::-webkit-scrollbar,.rail::-webkit-scrollbar{width:9px}
+.pane::-webkit-scrollbar-thumb,.rail::-webkit-scrollbar-thumb{background:#1d2b42; border-radius:6px}
+
+.sum{display:grid; grid-template-columns:repeat(4,1fr); gap:8px}
+.sum .cell{border:1px solid var(--line); border-radius:10px; padding:8px 9px; background:#0d1524}
+.sum .cell b{display:block; font:600 17px/1.1 var(--mono); color:var(--txt)}
+.sum .cell b em{font-style:normal; font-size:10px; color:var(--txt3); margin-left:2px}
+.sum .cell span{display:block; font-size:10.5px; color:var(--txt3); margin-top:4px}
+
+.feat{
+  border:1px solid var(--line); border-left:3px solid var(--cls-stock);
+  border-radius:10px; padding:9px 11px; background:linear-gradient(180deg,#0f1829,#0c1420);
+  cursor:pointer; transition:.16s; position:relative;
+}
+.feat:hover{border-color:#31506c; transform:translateY(-1px); background:linear-gradient(180deg,#122036,#0e1826)}
+.feat.sel{box-shadow:0 0 0 1px rgba(55,196,240,.45) inset, 0 8px 22px rgba(10,60,90,.35); border-color:#2b7f9f}
+.feat .head{display:flex; align-items:center; gap:8px}
+.feat .nm{font-size:13px; font-weight:600}
+.feat .kid{font:11px var(--mono); color:var(--txt3)}
+.feat .cf{margin-left:auto; font:11px var(--mono); color:var(--txt3)}
+.feat .cf b{color:#8df0c8}
+.feat .meta{display:flex; flex-wrap:wrap; gap:5px 10px; margin-top:6px; font-size:11px; color:var(--txt3)}
+.feat .meta u{text-decoration:none; color:var(--txt2); font-family:var(--mono)}
+.feat .faces{margin-top:6px; display:flex; flex-wrap:wrap; gap:4px}
+.feat .face{
+  font:10.5px var(--mono); color:#9ecbe8; border:1px solid #1d3550; background:#0c1a29;
+  padding:1px 5px; border-radius:5px; cursor:pointer;
+}
+.feat .face.bot{border-color:#7a5a1f; color:#ffd58a; background:#241a0b}
+.confbar{height:2px; background:#121d2e; border-radius:2px; margin-top:7px; overflow:hidden}
+.confbar i{display:block;height:100%;background:linear-gradient(90deg,#37c4f0,#5eead4)}
+
+table.proc{width:100%; border-collapse:collapse; font-size:11.5px}
+table.proc th{
+  text-align:left; font-weight:600; color:var(--txt3); font-size:10.5px; letter-spacing:.6px;
+  padding:6px 6px; border-bottom:1px solid var(--line); position:sticky; top:0; background:#0b1322;
+}
+table.proc td{padding:7px 6px; border-bottom:1px solid rgba(30,43,66,.65); color:var(--txt2); vertical-align:top}
+table.proc td.id{font:11px var(--mono); color:var(--txt3)}
+table.proc td.op{color:var(--txt); font-weight:600; white-space:nowrap}
+table.proc td.num{font-family:var(--mono); font-size:11px; color:#bfe9ff}
+table.proc td.tool{white-space:nowrap; font-size:11px}
+table.proc td.tool .param{color:#8fb3cc; font-family:var(--mono); font-size:10px}
+table.proc tr.low td{background:rgba(80,60,15,.16)}
+table.proc tr:hover td{background:rgba(40,70,110,.18)}
+.tag{font-size:10px; padding:1px 5px; border-radius:5px; border:1px solid #1e6b52; color:#8df0c8; background:#0c231b; white-space:nowrap}
+.tag.warn{border-color:#7a5a1f; color:#ffd58a; background:#241a0b}
+.procnote{font-size:11px; color:var(--txt3); line-height:1.6; border-left:2px solid #23405d; padding-left:8px}
+
+pre.json{
+  margin:0; padding:11px; border-radius:10px; border:1px solid var(--line); background:#08101c;
+  font:11px/1.55 var(--mono); color:#a9c6dd; overflow:auto; max-height:calc(100vh - 260px);
+  white-space:pre;
+}
+.mini{display:flex; gap:6px; margin-top:8px}
+.mini .btn{padding:6px 10px; font-size:11.5px}
+
+/* ---------------- footer ---------------- */
+.foot{
+  display:flex; align-items:center; gap:14px; padding:7px 16px; border-top:1px solid var(--line);
+  font-size:11px; color:var(--txt3); background:#0a111d;
+}
+.foot .sp{flex:1}
+.foot b{color:var(--txt2); font-weight:600}
+.foot .d{width:6px;height:6px;border-radius:50%;background:var(--ok); box-shadow:0 0 8px var(--ok)}
+.toast{
+  position:fixed; left:50%; bottom:52px; transform:translate(-50%,20px);
+  background:#0e2033; border:1px solid #2b7f9f; color:#d6f4ff; font-size:12px;
+  padding:9px 16px; border-radius:10px; opacity:0; pointer-events:none; transition:.28s; z-index:50;
+  box-shadow:0 10px 30px rgba(0,0,0,.4);
+}
+.toast.on{opacity:1; transform:translate(-50%,0)}
+@media (max-width:1280px){
+  .rail{width:238px} .rail.right{width:340px}
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo"><span>AA</span></div>
+      <div>
+        <h1>YFIDP · <em>AI 工艺助手</em></h1>
+        <p>AAGNet 加工特征识别 · 面语义 / 实例 / 底面 三任务</p>
+      </div>
+    </div>
+
+    <div class="parts" id="parts"></div>
+
+    <div class="spacer"></div>
+    <div class="tools">
+      <div class="badge" title="该页面为交互演示：几何与面拓扑来自真实 STEP 导出模型，识别结果为离线样例数据驱动，并非 GNN 实测。">
+        <i class="q">i</i> 演示样例数据
+      </div>
+      <button class="btn" id="btnExport">导出识别结果</button>
+      <button class="btn primary" id="btnRun"><i class="dot"></i> 重新识别</button>
+    </div>
+  </header>
+
+  <div class="main">
+
+    <!-- left rail -->
+    <aside class="rail">
+      <div>
+        <div class="sec-title"><b>模型</b><span id="mdlTag">STEP / B-Rep</span></div>
+        <div class="card">
+          <dl class="kv">
+            <dt>零件</dt><dd id="mName">—</dd>
+            <dt>文件</dt><dd id="mFile">—</dd>
+            <dt>外形尺寸</dt><dd id="mSize">—</dd>
+            <dt>三角面</dt><dd id="mTri">—</dd>
+            <dt>B-Rep 面</dt><dd id="mFace" class="hi">—</dd>
+            <dt>gAAG 边</dt><dd id="mEdge">—</dd>
+          </dl>
+        </div>
+      </div>
+
+      <div>
+        <div class="sec-title"><b>识别流程</b><span id="flowState">待运行</span></div>
+        <div class="card steps" id="steps"></div>
+        <div class="bar"><i id="flowBar"></i></div>
+      </div>
+
+      <div>
+        <div class="sec-title"><b>gAAG 图</b><span>面 = 节点 · 邻接 = 边</span></div>
+        <div class="graphwrap">
+          <canvas id="graph" width="520" height="446"></canvas>
+          <div class="gtip" id="gtip"></div>
+        </div>
+      </div>
+
+      <div>
+        <div class="sec-title"><b>模型指标</b><span>参考</span></div>
+        <div class="card">
+          <dl class="kv">
+            <dt>三任务</dt><dd>语义 / 实例 / 底面</dd>
+            <dt>参数量</dt><dd>0.41 M</dd>
+            <dt>单件推理</dd><dd id="mInfer" class="hi">—</dd>
+            <dt>面准确率</dt><dd>97.2 %*</dd>
+            <dt>实例 F1</dd><dd>96.4 %*</dd>
+          </dl>
+          <div class="procnote" style="margin-top:8px">* 论文口径（MFInstSeg），演示页不重算。</div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- viewer -->
+    <section class="viewer" id="viewer">
+      <canvas id="gl"></canvas>
+      <div class="vgrid"></div>
+      <div class="scan" id="scan"></div>
+
+      <div class="vtop">
+        <div class="seg" id="modes">
+          <button data-mode="semantic" class="on">语义</button>
+          <button data-mode="instance">实例</button>
+          <button data-mode="bottom">底面</button>
+          <button data-mode="face">面片</button>
+        </div>
+        <div class="vbtns">
+          <button class="iconbtn on" id="vIso" title="等轴视图">ISO</button>
+          <button class="iconbtn" id="vTop" title="俯视图">TOP</button>
+          <button class="iconbtn" id="vFront" title="正视图">FRT</button>
+          <button class="iconbtn" id="vReset" title="复位缩放">⤢</button>
+        </div>
+      </div>
+
+      <div class="hint" id="hint">左键旋转 · 滚轮缩放 · 右键平移 · 点击面查看特征</div>
+
+      <div class="legend" id="legend"></div>
+      <div class="hud" id="hud">
+        <h4>拾取信息</h4>
+        <div class="line"><span>面 ID</span><span id="hFace">—</span></div>
+        <div class="line"><span>类型 / 类别</span><span id="hType">—</span></div>
+        <div class="line"><span>面积</span><span id="hArea">—</span></div>
+        <div class="line"><span>所属特征</span><span id="hFeat">—</span></div>
+      </div>
+    </section>
+
+    <!-- right rail -->
+    <aside class="rail right">
+      <div class="tabs" id="tabs">
+        <button data-pane="feat" class="on">特征清单 <span id="tabN" style="color:var(--accent);font-family:var(--mono)"></span></button>
+        <button data-pane="proc">工序预填</button>
+        <button data-pane="data">结构化输出</button>
+      </div>
+
+      <div class="pane on" id="pane-feat">
+        <div class="sum" id="sum"></div>
+        <div id="featList" style="display:flex;flex-direction:column;gap:8px"></div>
+        <div class="procnote" id="featNote"></div>
+      </div>
+
+      <div class="pane" id="pane-proc">
+        <div class="sum" id="procSum" style="grid-template-columns:repeat(3,1fr)"></div>
+        <table class="proc" id="procTable">
+          <thead><tr><th>序</th><th>工序</th><th>关联特征</th><th>刀具 / 参数</th><th>工时</th><th>状态</th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="procnote">
+          工序由识别结果按规则预填（铣削 → 钻孔 → 去毛刺），供工艺员确认后写入 YFIDP 工艺模板；置信度低于阈值自动标记“需确认”。
+        </div>
+      </div>
+
+      <div class="pane" id="pane-data">
+        <div class="procnote">映射回特征树的中间结构，可直接落库或转 ONNX 推理服务的返回体。</div>
+        <pre class="json" id="json"></pre>
+        <div class="mini">
+          <button class="btn" id="btnCopy">复制 JSON</button>
+          <button class="btn" id="btnDl">下载 .json</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="foot">
+    <i class="d"></i><span><b id="fState">就绪</b> · 演示模式（离线样例数据）</span>
+    <span class="sp"></span>
+    <span id="fInfo">AAGNet · RCIM 2024 · 权重 0.41M</span>
+  </footer>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+window.addEventListener('error', function(e){
+  var d=document.getElementById('dbg') || (function(){var x=document.createElement('div');x.id='dbg';
+    x.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:999;background:#3a0d12;color:#ffd7d7;font:12px/1.5 monospace;padding:8px 12px;max-height:40%;overflow:auto;white-space:pre-wrap';
+    document.body.appendChild(x);return x;})();
+  d.textContent += '[ERR] ' + (e.message||e.reason) + ' @ ' + (e.filename||'') + ':' + (e.lineno||'') + '\n' + ((e.error&&e.error.stack)||'') + '\n';
+});
+</script>
+<script src="data.js"></script>
+<script>
+"use strict";
+(function(){
+  const PARTS = window.AAG_DEMO || [];
+  const CLASS = {
+    '通孔': {c:'--cls-hole',  hex:'#38bdf8', rgb:[0.22,0.74,0.97]},
+    '盲孔': {c:'--cls-blind', hex:'#a78bfa', rgb:[0.65,0.55,0.98]},
+    '型腔': {c:'--cls-pocket',hex:'#fbbf24', rgb:[0.98,0.75,0.25]},
+    '槽':   {c:'--cls-slot',  hex:'#34d399', rgb:[0.20,0.84,0.60]},
+    '台阶': {c:'--cls-step',  hex:'#60a5fa', rgb:[0.38,0.65,0.96]},
+    '毛坯': {c:'--cls-stock', hex:'#5b6b80', rgb:[0.36,0.42,0.50]}
+  };
+  const STOCK = CLASS['毛坯'];
+
+  /* ================================================================== state */
+  const S = {
+    part:null, instanceOfFace:new Map(), faceClasses:null, selInstance:-1,
+    mode:'semantic', hidden:new Set(), run:false, revision:0
+  };
+
+  const $ = id => document.getElementById(id);
+  const fmt = (n,d=1)=> Number(n).toFixed(d);
+
+  /* ================================================================== part switching */
+  function initParts(){
+    const host = $('parts');
+    host.innerHTML = '<span class="lab">示例零件</span>' + PARTS.map((p,i)=>
+      `<button class="chip${i===0?' on':''}" data-i="${i}"><b>件 ${String.fromCharCode(65+i)}</b></button>`
+    ).join('');
+    host.querySelectorAll('.chip').forEach(b=>{
+      b.onclick = ()=>{
+        if (S.run) return;
+        host.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));
+        b.classList.add('on');
+        loadPart(Number(b.dataset.i));
+        setTimeout(()=>{ if(!S.run) runPipeline(); }, 420);
+      };
+    });
+  }
+
+  function loadPart(i){
+    S.part = PARTS[i];
+    S.part._decoded = S.part._decoded || decodePart(S.part);
+    S.selInstance = -1;
+    S.revision++;
+    buildFaceMap();
+    S.bottomFaces = new Set(S.part.instances.map(i=>i.bottom).filter(x=>x!==null));
+    S.areaTotal = S.part.faces.reduce((a,f)=>a+(f.area||0),0)||1;
+    renderModel(S.part._decoded);
+    fitCamera();
+    paintAll();
+    renderPanels();
+    drawGraph();
+    hudClear();
+    setFlowIdle();
+  }
+
+  function decodePart(p){
+    const raw = atob(p.positions_b64);
+    const buf = new Uint8Array(raw.length);
+    for (let i=0;i<raw.length;i++) buf[i] = raw.charCodeAt(i);
+    const pos = new Float32Array(buf.buffer);
+    const tri = pos.length/9;
+    // CAD Z-up -> GL Y-up: (x,y,z) -> (x, z, -y)
+    for (let v=0; v<pos.length; v+=3){
+      const y = pos[v+1], z = pos[v+2];
+      pos[v+1] = z; pos[v+2] = -y;
+    }
+    const fid = new Int32Array(tri);
+    for (let i=0;i<tri;i++) fid[i] = p.faceids[i];
+    const nrm = new Float32Array(pos.length);
+    for (let t=0;t<tri;t++){
+      const o = t*9;
+      const ax=pos[o],ay=pos[o+1],az=pos[o+2];
+      const bx=pos[o+3],by=pos[o+4],bz=pos[o+5];
+      const cx=pos[o+6],cy=pos[o+7],cz=pos[o+8];
+      const ux=bx-ax, uy=by-ay, uz=bz-az, vx=cx-ax, vy=cy-ay, vz=cz-az;
+      let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+      const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
+      for (let k=0;k<3;k++){ nrm[o+k*3]=nx; nrm[o+k*3+1]=ny; nrm[o+k*3+2]=nz; }
+    }
+    // face -> instance index
+    const faceById = new Map(p.faces.map(f=>[f.id,f]));
+    const instOfFace = new Map();
+    p.instances.forEach((it,ii)=> it.faces.forEach(fidv=> instOfFace.set(fidv, ii)));
+    // boundary edge segments (per face + feature edges)
+    const map = new Map();
+    for (let t=0;t<tri;t++){
+      const o=t*9, f=fid[t];
+      const vs=[[pos[o],pos[o+1],pos[o+2]],[pos[o+3],pos[o+4],pos[o+5]],[pos[o+6],pos[o+7],pos[o+8]]];
+      for (let e=0;e<3;e++){
+        const a=vs[e], b=vs[(e+1)%3];
+        const k=[a,b].map(v=>v.map(x=>Math.round(x*1e5)).join(',')).sort().join('|');
+        let rec=map.get(k);
+        if (!rec){ rec={a:a,b:b,fs:new Set([f]), n:1}; map.set(k,rec); }
+        else { rec.fs.add(f); rec.n++; }
+      }
+    }
+    const lines=[];
+    map.forEach(rec=>{ if(rec.n===1 || rec.fs.size>1) lines.push(rec.a, rec.b); });
+    const edges = new Float32Array(lines.length*3);
+    for (let i=0;i<lines.length;i++){ edges[i*3]=lines[i][0]; edges[i*3+1]=lines[i][1]; edges[i*3+2]=lines[i][2]; }
+    return {pos, nrm, fid, tri, faceById, instOfFace, edges};
+  }
+
+  function buildFaceMap(){
+    const p = S.part;
+    S.faceClasses = new Map();
+    const counts = {};
+    p.instances.forEach(it=> it.faces.forEach(f=> S.faceClasses.set(f, it.cls)));
+    p.faces.forEach(f=>{
+      const c = S.faceClasses.get(f.id) || '毛坯';
+      counts[c] = (counts[c]||0)+1;
+    });
+    S.counts = counts;
+  }
+
+  /* ================================================================== webgl */
+  const GL = {gl:null, prog:null, pick:null, buf:{}, tex:{}, fbo:null, cam:{}};
+
+  function initGL(){
+    const cv = $('gl');
+    const gl = cv.getContext('webgl', {antialias:true, alpha:true, premultipliedAlpha:false, preserveDrawingBuffer:true});
+    if (!gl){ document.body.insertAdjacentHTML('beforeend','<div style="position:fixed;inset:0;display:grid;place-items:center;color:#fff;background:#0a1120">当前浏览器不支持 WebGL</div>'); return; }
+    GL.gl = gl;
+
+    const vs = `
+      attribute vec3 aPos; attribute vec3 aNrm; attribute vec3 aCol; attribute float aSel;
+      uniform mat4 uMVP; uniform mat4 uModel;
+      varying vec3 vN; varying vec3 vC; varying float vS; varying vec3 vP;
+      void main(){
+        vec4 w = uModel * vec4(aPos,1.0);
+        vP = w.xyz;
+        vN = (uModel * vec4(aNrm,0.0)).xyz;
+        vC = aCol; vS = aSel;
+        gl_Position = uMVP * vec4(aPos,1.0);
+      }`;
+    const fs = `
+      precision mediump float;
+      varying vec3 vN; varying vec3 vC; varying float vS; varying vec3 vP;
+      uniform float uDim; uniform vec3 uSel; uniform float uPulse;
+      void main(){
+        vec3 N = normalize(vN);
+        if (dot(N, vec3(0.0,0.0,1.0)) < 0.0) N = -N;
+        vec3 V = vec3(0.0,0.0,1.0);
+        vec3 L1 = normalize(vec3(0.42,0.62,0.86));
+        vec3 L2 = normalize(vec3(-0.62,0.18,0.42));
+        float d1 = max(dot(N,L1),0.0), d2 = max(dot(N,L2),0.0);
+        float rim = pow(1.0 - max(dot(N,V),0.0), 2.2);
+        vec3 base = vC;
+        float f = 0.30 + 0.66*d1 + 0.20*d2 + 0.18*rim;
+        vec3 col = base * f;
+        col += vec3(0.02,0.05,0.07) * rim;
+        if (uDim > 0.5 && vS < 0.5) {
+          float g = dot(base, vec3(0.30,0.36,0.45));
+          col = mix(col, vec3(g)*0.55, 0.62);
+        }
+        if (vS > 0.5) {
+          col = mix(col, uSel, 0.45*uPulse);
+          col *= 1.12;
+        }
+        gl_FragColor = vec4(col, 1.0);
+      }`;
+    const pv = `
+      attribute vec3 aPos; uniform mat4 uMVP; void main(){ gl_Position = uMVP*vec4(aPos,1.0); }`;
+    const pf = `
+      precision mediump float; void main(){ gl_FragColor = vec4(1.0,1.0,1.0,1.0); }`;
+    const pidvs = `
+      attribute vec3 aPos; attribute float aFid; uniform mat4 uMVP;
+      varying float vF;
+      void main(){ vF = aFid; gl_Position = uMVP*vec4(aPos,1.0); }`;
+    const pidfs = `
+      precision mediump float; varying float vF;
+      void main(){
+        float id = vF;
+        float r = mod(id, 256.0);
+        float g = mod(floor(id/256.0), 256.0);
+        float b = mod(floor(id/65536.0), 256.0);
+        gl_FragColor = vec4(r/255.0, g/255.0, b/255.0, 1.0);
+      }`;
+
+    GL.prog = makeProg(vs, fs);
+    GL.line = makeProg(pv, `precision mediump float; uniform vec3 uColor; void main(){ gl_FragColor=vec4(uColor,1.0); }`);
+    GL.pick = makeProg(pidvs, pidfs);
+    GL.buf = {pos:gl.createBuffer(), nrm:gl.createBuffer(), col:gl.createBuffer(), sel:gl.createBuffer(),
+              fid:gl.createBuffer(), line:gl.createBuffer(), selLine:gl.createBuffer()};
+    GL.rand = {lineCount:0, selCount:0};
+    GL.cam = {az:0.72, el:0.52, dist:2.35, target:[0,0,0], fov:0.52};
+    bindEvents();
+  }
+
+  function makeProg(vsSrc, fsSrc){
+    const gl = GL.gl;
+    const sh = (t,src)=>{ const s=gl.createShader(t); gl.shaderSource(s,src); gl.compileShader(s);
+      if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; };
+    const p = gl.createProgram();
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, vsSrc));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fsSrc));
+    gl.linkProgram(p);
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(p));
+    return p;
+  }
+
+  function renderModel(D){
+    const gl = GL.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.pos); gl.bufferData(gl.ARRAY_BUFFER, D.pos, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.nrm); gl.bufferData(gl.ARRAY_BUFFER, D.nrm, gl.STATIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.fid); gl.bufferData(gl.ARRAY_BUFFER, floatIds(D.fid), gl.STATIC_DRAW);
+    const cols = new Float32Array(D.pos.length);
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.col); gl.bufferData(gl.ARRAY_BUFFER, cols, gl.DYNAMIC_DRAW);
+    const sel = new Float32Array(D.tri*3);
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.sel); gl.bufferData(gl.ARRAY_BUFFER, sel, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.line); gl.bufferData(gl.ARRAY_BUFFER, D.edges, gl.STATIC_DRAW);
+    GL.rand.lineCount = D.edges.length/3;
+  }
+
+  function floatIds(fid){
+    const out = new Float32Array(fid.length*3);
+    for (let i=0;i<fid.length;i++){ const v=fid[i]; out[i*3]=v; out[i*3+1]=v; out[i*3+2]=v; }
+    return out;
+  }
+
+  function setColors(){
+    const gl = GL.gl, D = S.part._decoded;
+    const cols = new Float32Array(D.pos.length);
+    // palette per face for "face" mode
+    for (let t=0;t<D.tri;t++){
+      const f = D.fid[t];
+      let rgb = STOCK.rgb;
+      const cls = S.faceClasses.get(f) || '毛坯';
+      if (S.mode === 'semantic' || S.mode === 'instance'){
+        if (!S.hidden.has(cls)) rgb = CLASS[cls].rgb;
+        if (S.mode === 'instance'){
+          // per-instance hue jitter inside the category family: same class, distinct instances
+          if (cls !== '毛坯'){
+            const ii = D.instOfFace.get(f);
+            if (ii !== undefined){
+              const hsv0 = rgb2hsv(rgb);
+              const step = ((ii*5)%7)/7 - 0.5;      // -0.5 .. 0.5
+              const h = (hsv0[0] + step*0.17 + 1)%1;  // ±0.085 of the circle
+              const v = 0.84 - 0.14*(((ii*3)%3)/2);
+              rgb = hsv(h, hsv0[1], v);
+            }
+          }
+        }
+      } else if (S.mode === 'bottom'){
+        const isBottom = S.bottomFaces && S.bottomFaces.has(f);
+        rgb = isBottom ? [1.0, 0.56, 0.16] : [0.32, 0.38, 0.45];
+        if (isBottom && S.hidden.has('底面')) rgb = [0.32, 0.38, 0.45];
+      } else if (S.mode === 'face'){
+        const h = (f*0.6180339887)%1;
+        rgb = hsv(h, 0.42, 0.88);
+      }
+      for (let k=0;k<3;k++){
+        const o=t*9+k*3;
+        cols[o]=rgb[0]; cols[o+1]=rgb[1]; cols[o+2]=rgb[2];
+      }
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.col);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, cols);
+    // selection flags
+    const sel = new Float32Array(D.tri*3);
+    if (S.selInstance>=0){
+      const inst = S.part.instances[S.selInstance];
+      const set = new Set(inst.faces);
+      for (let t=0;t<D.tri;t++) if (set.has(D.fid[t])) sel[t*3]=sel[t*3+1]=sel[t*3+2]=1;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.sel);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, sel);
+    updateSelEdges();
+  }
+
+  function rgb2hsv(c){
+    const r=c[0], g=c[1], b=c[2];
+    const mx=Math.max(r,g,b), mn=Math.min(r,g,b), d=mx-mn;
+    let h=0;
+    if (d>1e-6){
+      if (mx===r) h=((g-b)/d)%6;
+      else if (mx===g) h=(b-r)/d+2;
+      else h=(r-g)/d+4;
+      h/=6; if (h<0) h+=1;
+    }
+    return [h, mx>1e-6? d/mx : 0, mx];
+  }
+
+  function hsv(h,s,v){
+    const k=n=>(n+h*6)%6;
+    const f=n=>v - v*s*Math.max(0, Math.min(k(n), 4-k(n), 1));
+    return [f(5),f(3),f(1)];
+  }
+
+  function updateSelEdges(){
+    const gl = GL.gl, D = S.part._decoded;
+    let arr = [];
+    if (S.selInstance>=0){
+      const set = new Set(S.part.instances[S.selInstance].faces);
+      const map = new Map();
+      for (let t=0;t<D.tri;t++){
+        if (!set.has(D.fid[t])) continue;
+        const o=t*9;
+        const vs=[[D.pos[o],D.pos[o+1],D.pos[o+2]],[D.pos[o+3],D.pos[o+4],D.pos[o+5]],[D.pos[o+6],D.pos[o+7],D.pos[o+8]]];
+        for (let e=0;e<3;e++){
+          const a=vs[e], b=vs[(e+1)%3];
+          const k=[a,b].map(v=>v.map(x=>Math.round(x*1e5)).join(',')).sort().join('|');
+          map.set(k, (map.get(k)||0)+1);
+        }
+      }
+      map.forEach((n, k)=>{
+        if (n!==1) return;
+        const [a,b] = k.split('|').map(s=>s.split(',').map(Number));
+        arr.push(a[0],a[1],a[2],b[0],b[1],b[2]);
+      });
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.selLine);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(arr), gl.DYNAMIC_DRAW);
+    GL.rand.selCount = arr.length/3;
+  }
+
+  function resize(){
+    const cv = $('gl'), dpr = Math.min(window.devicePixelRatio||1, 2);
+    const w = Math.max(1, cv.clientWidth*dpr|0), h = Math.max(1, cv.clientHeight*dpr|0);
+    if (cv.width!==w || cv.height!==h){ cv.width=w; cv.height=h; }
+    const gl = GL.gl; if(!gl) return;
+    gl.viewport(0,0,cv.width,cv.height);
+    if (GL.fbo){ gl.bindTexture(gl.TEXTURE_2D, GL.tex.color); gl.texImage2D(gl.TEXTURE_2D,0,gl.RGBA,cv.width,cv.height,0,gl.RGBA,gl.UNSIGNED_BYTE,null);
+      gl.bindRenderbuffer(gl.RENDERBUFFER, GL.tex.depth); gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, cv.width, cv.height); }
+  }
+
+  function modelMat(){
+    return [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+  }
+
+  function mul(a,b){
+    const o=new Array(16).fill(0);
+    for(let i=0;i<4;i++)for(let j=0;j<4;j++){let s=0;for(let k=0;k<4;k++)s+=a[i*4+k]*b[k*4+j];o[i*4+j]=s;}
+    return o;
+  }
+  function persp(fovy, aspect, near, far){
+    const f=1/Math.tan(fovy/2), nf=1/(near-far);
+    return [f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0];
+  }
+  function lookAt(eye, center, up){
+    const z=norm(sub(eye,center)), x=norm(cross(up,z)), y=cross(z,x);
+    return [x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
+            -dot(x,eye),-dot(y,eye),-dot(z,eye),1];
+  }
+  function sub(a,b){return [a[0]-b[0],a[1]-b[1],a[2]-b[2]];}
+  function cross(a,b){return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];}
+  function dot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+  function norm(a){const l=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/l,a[1]/l,a[2]/l];}
+
+  function mvp(){
+    const cv=$('gl'), c=GL.cam;
+    const az=c.az, el=c.el;
+    const eye=[Math.cos(el)*Math.sin(az)*c.dist, Math.sin(el)*c.dist, Math.cos(el)*Math.cos(az)*c.dist];
+    const view=lookAt(add(eye,c.target), c.target, [0,1,0]);
+    const proj=persp(c.fov, cv.width/cv.height, c.dist*0.05, c.dist*8);
+    // arrays are column-major: mul(b,a) yields column-major (a*b)
+    return mul(view, proj);
+  }
+  function add(a,b){return [a[0]+b[0],a[1]+b[1],a[2]+b[2]];}
+
+  function draw(pulse){
+    const gl = GL.gl; if(!gl||!S.part) return;
+    const cv=$('gl');
+    gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+
+    const M = mvp();
+    const P = GL.prog; gl.useProgram(P);
+    const alb = gl.getAttribLocation(P,'aPos'), anb=gl.getAttribLocation(P,'aNrm'),
+          acb=gl.getAttribLocation(P,'aCol'), asb=gl.getAttribLocation(P,'aSel');
+    bindAttr(alb, GL.buf.pos, 3); bindAttr(anb, GL.buf.nrm, 3);
+    bindAttr(acb, GL.buf.col, 3); bindAttr(asb, GL.buf.sel, 1);
+    gl.uniformMatrix4fv(gl.getUniformLocation(P,'uMVP'), false, new Float32Array(M));
+    gl.uniformMatrix4fv(gl.getUniformLocation(P,'uModel'), false, new Float32Array(modelMat()));
+    gl.uniform1f(gl.getUniformLocation(P,'uDim'), S.selInstance>=0?1:0);
+    gl.uniform3f(gl.getUniformLocation(P,'uSel'), 0.16, 0.82, 1.0);
+    gl.uniform1f(gl.getUniformLocation(P,'uPulse'), 0.55+0.45*Math.sin(pulse/260));
+    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.2, 1.6);
+    gl.drawArrays(gl.TRIANGLES, 0, S.part._decoded.tri*3);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+
+    // feature edges
+    if (GL.rand.lineCount){
+      const LP = GL.line; gl.useProgram(LP);
+      bindAttr(gl.getAttribLocation(LP,'aPos'), GL.buf.line, 3);
+      gl.uniformMatrix4fv(gl.getUniformLocation(LP,'uMVP'), false, new Float32Array(M));
+      gl.uniform3f(gl.getUniformLocation(LP,'uColor'), 0.04,0.06,0.09);
+      gl.drawArrays(gl.LINES, 0, GL.rand.lineCount);
+    }
+    // selection outline
+    if (GL.rand.selCount){
+      const LP = GL.line; gl.useProgram(LP);
+      bindAttr(gl.getAttribLocation(LP,'aPos'), GL.buf.selLine, 3);
+      gl.uniformMatrix4fv(gl.getUniformLocation(LP,'uMVP'), false, new Float32Array(M));
+      gl.uniform3f(gl.getUniformLocation(LP,'uColor'), 0.28, 0.93, 1.0);
+      gl.drawArrays(gl.LINES, 0, GL.rand.selCount);
+    }
+    gl.disable(gl.CULL_FACE);
+  }
+
+  function bindAttr(loc, buf, size){
+    const gl=GL.gl; if(loc<0) return;
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+  }
+
+  /* ---------------------------------------------------------------- picking */
+  function pickAt(px, py){
+    const gl=GL.gl, cv=$('gl');
+    if (!GL.fbo){
+      GL.fbo = gl.createFramebuffer(); GL.tex = {color:gl.createTexture(), depth:gl.createRenderbuffer()};
+      gl.bindTexture(gl.TEXTURE_2D, GL.tex.color);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, cv.width, cv.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.bindRenderbuffer(gl.RENDERBUFFER, GL.tex.depth);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, cv.width, cv.height);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, GL.fbo);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, GL.tex.color, 0);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, GL.tex.depth);
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, GL.fbo);
+    gl.viewport(0,0,cv.width,cv.height);
+    gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
+    gl.clearColor(1,1,1,1); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    const P = GL.pick;
+    gl.useProgram(P);
+    bindAttr(gl.getAttribLocation(P,'aPos'), GL.buf.pos, 3);
+    bindAttr(gl.getAttribLocation(P,'aFid'), GL.buf.fid, 1);
+    gl.uniformMatrix4fv(gl.getUniformLocation(P,'uMVP'), false, new Float32Array(mvp()));
+    gl.drawArrays(gl.TRIANGLES, 0, S.part._decoded.tri*3);
+    const dpr = Math.min(window.devicePixelRatio||1,2);
+    const x = Math.round(px*dpr), y = Math.round(cv.height - py*dpr);
+    const buf = new Uint8Array(4);
+    gl.readPixels(x, y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, buf);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    if (buf[0]===255 && buf[1]===255 && buf[2]===255) return -1;
+    return buf[0] + buf[1]*256 + buf[2]*65536;
+  }
+
+  /* ---------------------------------------------------------------- camera */
+  let drag=null;
+  function bindEvents(){
+    const cv=$('gl');
+    cv.addEventListener('mousedown', e=>{
+      drag={x:e.clientX, y:e.clientY, moved:0, btn:e.button};
+      if (e.button!==0) cv.style.cursor='grabbing';
+    });
+    window.addEventListener('mousemove', e=>{
+      if (drag){
+        const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+        drag.moved += Math.abs(dx)+Math.abs(dy);
+        if (drag.btn===0){
+          GL.cam.az -= dx*0.008; GL.cam.el = Math.max(-1.35, Math.min(1.35, GL.cam.el + dy*0.008));
+        } else {
+          const s=GL.cam.dist*0.0016;
+          const right=[Math.cos(GL.cam.az),0,-Math.sin(GL.cam.az)];
+          const up=[0,1,0];
+          GL.cam.target[0] -= right[0]*dx*s; GL.cam.target[1] += dy*s; GL.cam.target[2] -= right[2]*dx*s;
+        }
+        drag.x=e.clientX; drag.y=e.clientY;
+      } else {
+        hoverAt(e);
+      }
+    });
+    window.addEventListener('mouseup', e=>{
+      if (drag && drag.moved<4 && drag.btn===0) clickAt(e);
+      drag=null; cv.style.cursor='grab';
+    });
+    cv.addEventListener('wheel', e=>{
+      e.preventDefault();
+      GL.cam.dist *= (e.deltaY>0?1.12:0.89);
+      GL.cam.dist = Math.max(0.9, Math.min(6, GL.cam.dist));
+    }, {passive:false});
+    cv.addEventListener('contextmenu', e=>e.preventDefault());
+    cv.addEventListener('dblclick', ()=>{ fitCamera(); });
+    cv.style.cursor='grab';
+  }
+
+  let hoverTimer=null;
+  function hoverAt(e){
+    if (S.run) return;
+    if (hoverTimer) return;
+    const rect=$('gl').getBoundingClientRect();
+    hoverTimer = setTimeout(()=>{
+      hoverTimer=null;
+      const f = pickAt(e.clientX-rect.left, e.clientY-rect.top);
+      if (f>=0) hudFace(f); else hudClear();
+    }, 40);
+  }
+  function clickAt(e){
+    const rect=$('gl').getBoundingClientRect();
+    const f = pickAt(e.clientX-rect.left, e.clientY-rect.top);
+    if (f<0){ selectInstance(-1); return; }
+    const ii = S.part._decoded.instOfFace.get(f);
+    if (ii!==undefined) selectInstance(ii, true);
+    else { selectInstance(-1); hudFace(f); }
+  }
+
+  function fitCamera(){
+    GL.cam.target=[0,0,0]; GL.cam.dist=2.30; GL.cam.az=0.70; GL.cam.el=0.46;
+  }
+
+  /* ================================================================== panels */
+  function renderPanels(){
+    const p=S.part;
+    $('mName').textContent = p.name;
+    $('mFile').textContent = p.source;
+    $('mSize').textContent = (p.size_mm||[]).map(x=>fmt(x)).join(' × ')+' mm';
+    $('mTri').textContent = p.triangles.toLocaleString();
+    $('mFace').textContent = p.faces.length;
+    $('mEdge').textContent = p.edges.length;
+    $('tabN').textContent = p.instances.length;
+    $('mInfer').textContent = (18 + p.faces.length*0.9).toFixed(0)+' ms';
+
+    // sum cards
+    const clsCount = {};
+    p.instances.forEach(it=> clsCount[it.cls]=(clsCount[it.cls]||0)+1);
+    const avgConf = p.instances.reduce((a,b)=>a+b.conf,0)/Math.max(p.instances.length,1);
+    $('sum').innerHTML = [
+      ['特征实例', p.instances.length, ''],
+      ['孔类', (clsCount['通孔']||0)+(clsCount['盲孔']||0), ''],
+      ['平均置信度', avgConf.toFixed(2), ''],
+      ['特征底面', S.bottomFaces.size, ''],
+    ].map(([k,v,u])=>`<div class="cell"><b>${v}<em>${u}</em></b><span>${k}</span></div>`).join('');
+
+    // feature list
+    const list = p.instances.map((it,i)=>{
+      const col = CLASS[it.cls].hex;
+      const faces = it.faces.map(f=>`<span class="face${f===it.bottom?' bot':''}" data-f="${f}">F${f}</span>`).join('');
+      const params = it.params.map(([k,v])=>`${k} <u>${v}</u>`).join(' · ');
+      return `<div class="feat" data-i="${i}" style="border-left-color:${col}">
+        <div class="head">
+          <span class="nm" style="color:${col}">${it.cls}</span>
+          <span class="kid">${it.key}</span>
+          <span class="cf">conf <b>${it.conf.toFixed(2)}</b></span>
+        </div>
+        <div class="meta">${params}</div>
+        <div class="faces">${faces}</div>
+        <div class="confbar"><i style="width:${(it.conf*100).toFixed(0)}%"></i></div>
+      </div>`;
+    }).join('');
+    $('featList').innerHTML = list;
+    $('featList').querySelectorAll('.feat').forEach(el=>{
+      el.onclick = ()=> selectInstance(Number(el.dataset.i), true);
+    });
+    $('featList').querySelectorAll('.face').forEach(el=>{
+      el.onclick = ev=>{ ev.stopPropagation(); focusFace(Number(el.dataset.f)); };
+    });
+    $('featNote').innerHTML = `共 ${p.instances.length} 个实例、${p.faces.length} 个 B-Rep 面；其中 ${p.faces.length-[...S.faceClasses.keys()].length} 个面未归入特征（毛坯面 / 未识别）。点击实例可在三维视图中高亮其面集合。`;
+
+    // legend
+    const order=['通孔','盲孔','型腔','槽','台阶','毛坯'];
+    $('legend').innerHTML = order.filter(c=>true).map(c=>{
+      const n = c==='毛坯' ? (p.faces.length - (S.faceClasses.size)) : p.faces.filter(f=>(S.faceClasses.get(f.id)||'毛坯')===c).length;
+      if (!n) return '';
+      const off = S.hidden.has(c)?' off':'';
+      return `<div class="row${off}" data-c="${c}"><i class="sw" style="background:${CLASS[c].hex}"></i>${c}<span class="n">${n} 面</span></div>`;
+    }).join('');
+    $('legend').querySelectorAll('.row').forEach(r=>{
+      r.onclick = ()=>{ const c=r.dataset.c; if (S.hidden.has(c)) S.hidden.delete(c); else S.hidden.add(c); setColors(); renderPanels(); };
+    });
+
+    // bottom faces set
+    S.bottomFaces = new Set(p.instances.map(i=>i.bottom).filter(x=>x!==null));
+
+    renderProc();
+    renderJson();
+  }
+
+  function renderProc(){
+    const p=S.part;
+    const rows=[];
+    let seq=10;
+    const byCls = {};
+    p.instances.forEach(it=> (byCls[it.cls]=byCls[it.cls]||[]).push(it));
+    const push=(op, items, tool, param, tmin)=>{
+      if(!items.length) return;
+      const low = items.some(i=>i.conf<0.93);
+      rows.push({seq, op, items, tool, param, tmin:Math.max(tmin,0.8), low});
+      seq+=10;
+    };
+    const holes = [...(byCls['通孔']||[]), ...(byCls['盲孔']||[])];
+    const holeDia = holes.length? fmt(holes[0].dia_mm) : '8.0';
+    // 05: face the stock / datum first
+    rows.push({seq:5, op:'铣基准面', items:[{key:'毛坯面', conf:0.99}], tool:'面铣刀 Φ80', param:'S1500 F800', tmin:6.0, low:false});
+    seq=10;
+    push('铣型腔', byCls['型腔']||[], '立铣刀 Φ12', 'S2400 F600', (byCls['型腔']||[]).reduce((a,i)=>a+i.depth_mm*0.35+3,0));
+    push('铣槽', byCls['槽']||[], '立铣刀 Φ8', 'S3200 F480', (byCls['槽']||[]).reduce((a,i)=>a+i.depth_mm*0.3+2,0));
+    push('铣台阶', byCls['台阶']||[], '面铣刀 Φ50', 'S1800 F900', (byCls['台阶']||[]).reduce((a,i)=>a+i.depth_mm*0.12+1.5,0));
+    push('钻孔', holes, '麻花钻 Φ'+holeDia, 'S1200 F120', holes.reduce((a,i)=>a+i.depth_mm/15+1.5,0));
+    push('去毛刺/倒角', (byCls['型腔']||[]).length||holes.length ? [{key:'通用', conf:0.99}] : [], '倒角刀 Φ6', 'S2000 F300', 2.5);
+
+    const total = rows.reduce((a,r)=>a+r.tmin,0);
+    const needConfirm = rows.filter(r=>r.low).reduce((a,r)=>a+r.items.length,0);
+    $('procSum').innerHTML = [
+      ['工序数', rows.length], ['预估工时', fmt(total)+' min'], ['需人工确认', needConfirm]
+    ].map(([k,v])=>`<div class="cell"><b>${v}</b><span>${k}</span></div>`).join('');
+
+    $('procTable').querySelector('tbody').innerHTML = rows.map(r=>{
+      const refs = r.items.map(i=>i.key).join(' / ');
+      return `<tr class="${r.low?'low':''}">
+        <td class="id">${r.seq}</td>
+        <td class="op">${r.op}</td>
+        <td>${refs}</td>
+        <td class="tool">${r.tool}<br><span class="param">${r.param}</span></td>
+        <td class="num">${r.tmin.toFixed(1)}′</td>
+        <td>${r.low?'<span class="tag warn">需确认</span>':'<span class="tag">可采纳</span>'}</td>
+      </tr>`;
+    }).join('');
+  }
+
+  function renderJson(){
+    const p=S.part;
+    const out = {
+      source: p.source,
+      model: { faces: p.faces.length, size_mm: p.size_mm, triangles: p.triangles },
+      model_tasks: { semantic: 'per-face class', instance: 'greedy group', bottom: 'per-instance' },
+      instances: p.instances.map(it=>({
+        id: it.key, class: it.cls, faces: it.faces,
+        bottom_face: it.bottom, confidence: Number(it.conf.toFixed(3)),
+        params: Object.fromEntries(it.params.map(([k,v])=>[k,v]))
+      })),
+      demo: 'sample data (offline), not network inference'
+    };
+    $('json').textContent = JSON.stringify(out, null, 2);
+    $('json')._raw = out;
+  }
+
+  /* ================================================================== gAAG graph */
+  function drawGraph(){
+    const cv=$('graph'), ctx=cv.getContext('2d');
+    const W=cv.width, H=cv.height, p=S.part;
+    ctx.clearRect(0,0,W,H);
+    const pos = new Map();
+    const pad=26;
+    const xs=p.faces.map(f=>f.centroid[0]), ys=p.faces.map(f=>f.centroid[1]);
+    const x0=Math.min(...xs), x1=Math.max(...xs), y0=Math.min(...ys), y1=Math.max(...ys);
+    const scx=(W-pad*2)/Math.max(x1-x0,1e-6), scy=(H-pad*2)/Math.max(y1-y0,1e-6);
+    p.faces.forEach(f=>{
+      const c=f.centroid;
+      const x = pad + (c[0]-x0)*scx;
+      const y = pad + (y1-c[1])*scy;   // CAD +Y up -> canvas Y down
+      pos.set(f.id, [x, y]);
+    });
+    // edges
+    ctx.lineWidth=1;
+    p.edges.forEach(([a,b])=>{
+      const A=pos.get(a), B=pos.get(b); if(!A||!B) return;
+      const clsA=S.faceClasses.get(a), clsB=S.faceClasses.get(b);
+      const same = clsA && clsA===clsB && (S.selInstance<0 || true);
+      ctx.strokeStyle = same? 'rgba(80,170,210,.34)' : 'rgba(70,95,125,.22)';
+      ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]); ctx.stroke();
+    });
+    // nodes
+    const nr = p.faces.length>60 ? 3.0 : 3.8;
+    p.faces.forEach(f=>{
+      const P=pos.get(f.id);
+      const cls=S.faceClasses.get(f.id)||'毛坯';
+      const col = CLASS[cls].hex;
+      const selInst = S.selInstance>=0 && S.part.instances[S.selInstance].faces.includes(f.id);
+      const r = selInst?nr*1.6:nr;
+      ctx.beginPath(); ctx.arc(P[0],P[1],r,0,7);
+      ctx.fillStyle = col; ctx.globalAlpha = S.selInstance>=0 && !selInst ? 0.32 : 0.92;
+      ctx.fill(); ctx.globalAlpha=1;
+      if (selInst){ ctx.strokeStyle='rgba(140,240,255,.9)'; ctx.lineWidth=1.6; ctx.stroke(); }
+    });
+    // hover
+    cv.onmousemove = e=>{
+      const rect=cv.getBoundingClientRect();
+      const x=(e.clientX-rect.left)*cv.width/rect.width, y=(e.clientY-rect.top)*cv.height/rect.height;
+      let best=null, bd=1e9;
+      pos.forEach((P,id)=>{ const d=Math.hypot(P[0]-x,P[1]-y); if(d<bd){bd=d;best=id;} });
+      const tip=$('gtip');
+      if (best!==null && bd<16){
+        const f=p.faces.find(x=>x.id===best);
+        tip.textContent = `F${best} · ${f.type} · ${(S.faceClasses.get(best)||'毛坯')}`;
+        const P=pos.get(best);
+        tip.style.left=(P[0]*rect.width/cv.width)+'px';
+        tip.style.top=(P[1]*rect.height/cv.height)+'px';
+        tip.style.opacity=1;
+        hudFace(best, true);
+      } else { tip.style.opacity=0; }
+    };
+    cv.onmouseleave=()=>{ $('gtip').style.opacity=0; };
+    cv.onclick=()=>{ const tip=$('gtip'); };
+  }
+
+  /* ================================================================== hud / selection */
+  function hudFace(fid, quiet){
+    const f = S.part.faces.find(x=>x.id===fid);
+    if (!f) return;
+    $('hFace').textContent = 'F'+fid;
+    $('hType').textContent = ({Plane:'平面',Cylinder:'圆柱面','Freeform/Cone':'锥面/自由曲面'})[f.type]||f.type;
+    $('hArea').textContent = fmt((f.area||0)/S.areaTotal*100, 1)+' % (面占比)';    const it = S.part.instances.find(i=>i.faces.includes(fid));
+    $('hFeat').textContent = it? `${it.cls} ${it.key}` : '毛坯 / 未分类';
+  }
+  function hudClear(){ ['hFace','hType','hArea','hFeat'].forEach(k=>$(k).textContent='—'); }
+
+  function selectInstance(i, scroll){
+    S.selInstance = i;
+    paintAll();
+    document.querySelectorAll('.feat').forEach((el,k)=> el.classList.toggle('sel', k===i));
+    if (scroll && i>=0){
+      const el=document.querySelector(`.feat[data-i="${i}"]`);
+      if (el) el.scrollIntoView({block:'nearest', behavior:'smooth'});
+      const it=S.part.instances[i];
+      $('hFace').textContent = it.faces.map(f=>'F'+f).slice(0,4).join(' ');
+      $('hType').textContent = it.cls;
+      $('hArea').textContent = it.faces.length+' 面';
+      $('hFeat').textContent = `${it.key} · ${it.cls}`;
+    } else if (i<0) hudClear();
+    drawGraph();
+  }
+  function focusFace(fid){
+    const it = S.part.instances.findIndex(x=>x.faces.includes(fid));
+    if (it>=0) selectInstance(it, true); else { selectInstance(-1); hudFace(fid); }
+  }
+
+  function paintAll(){ setColors(); draw(0); }
+
+  /* ================================================================== pipeline animation */
+  const STEPS = [
+    ['STEP 解析', 'OpenCASCADE 读取实体 / 拓扑检查'],
+    ['B-Rep → gAAG', '面为节点、公共边为边，附几何属性'],
+    ['GNN 三任务推理', '语义 + 实例 + 底面 一次前向'],
+    ['后处理', '阈值 / 贪心分组 / 类别投票'],
+    ['参数反算 & 工艺预填', 'OCC 反算孔径槽宽，生成工序'],
+  ];
+  function renderSteps(state){
+    const p=S.part;
+    const times = ['6 ms','9 ms','21 ms','5 ms','—'];
+    $('steps').innerHTML = STEPS.map(([t,d],i)=>{
+      const st = state[i]||'';
+      return `<div class="step ${st}"><div class="ic">${st==='done'?'✓':i+1}</div>
+        <div class="tx"><b>${t}</b><span>${d}</span></div><div class="ms">${st==='done'?(times[i]):''}</div></div>`;
+    }).join('');
+  }
+  function setFlowIdle(){
+    renderSteps(['done','done','idle','idle','idle']);
+    $('flowBar').style.width='0%';
+    $('flowState').textContent='待运行';
+  }
+
+  function runPipeline(){
+    if (S.run) return;
+    S.run=true;
+    $('btnRun').disabled=true;
+    $('scan').classList.add('on');
+    $('hint').style.opacity=0;
+    $('flowState').textContent='推理中';
+    S.selInstance=-1; paintAll();
+
+    const seq = [
+      [0,'run'], [1,'run'], [2,'run'], [3,'run'], [4,'run'], [5,'done']
+    ];
+    let i=0;
+    const tick=()=>{
+      const st=['done','done','idle','idle','idle'];
+      if (i>=1) st[0]='done';
+      if (i>=2) st[1]='done';
+      if (i>=3) st[2]='done';
+      if (i>=4) st[3]='done';
+      if (i>=5){ st[4]='done'; }
+      if (i<5){ st[Math.min(4,i)]='run'; }
+      renderSteps(st);
+      $('flowBar').style.width = Math.min(100, i*20)+'%';
+      i++;
+      if (i<=5) setTimeout(tick, i===1?260: i===4?420: 480);
+      else finishRun();
+    };
+    tick();
+  }
+  function finishRun(){
+    S.run=false;
+    $('btnRun').disabled=false;
+    $('scan').classList.remove('on');
+    $('hint').style.opacity=1;
+    $('flowState').textContent='完成';
+    toast('识别完成：'+S.part.instances.length+' 个特征实例，'+(18+S.part.faces.length*0.9).toFixed(0)+' ms');
+  }
+
+  /* ================================================================== misc */
+  let toastT=null;
+  function toast(msg){
+    const el=$('toast'); el.textContent=msg; el.classList.add('on');
+    clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('on'), 2200);
+  }
+
+  function bindUI(){
+    $('btnRun').onclick = runPipeline;
+    $('btnExport').onclick = downloadJson;
+    $('btnCopy').onclick = ()=>{ navigator.clipboard.writeText($('json').textContent).then(()=>toast('已复制 JSON')); };
+    $('btnDl').onclick = downloadJson;
+    $('modes').querySelectorAll('button').forEach(b=>{
+      b.onclick = ()=>{
+        $('modes').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+        b.classList.add('on');
+        S.mode = b.dataset.mode;
+        selectInstance(-1);
+        paintAll();
+        if (S.mode==='bottom') toast('底面识别：'+S.bottomFaces.size+' 个特征底面');
+      };
+    });
+    $('vIso').onclick = ()=>{ GL.cam.az=0.70; GL.cam.el=0.46; };
+    $('vTop').onclick = ()=>{ GL.cam.az=0.0; GL.cam.el=1.34; };
+    $('vFront').onclick = ()=>{ GL.cam.az=0.0; GL.cam.el=0.03; };
+    $('vReset').onclick = fitCamera;
+    $('tabs').querySelectorAll('button').forEach(b=>{
+      b.onclick = ()=>{
+        $('tabs').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
+        b.classList.add('on');
+        document.querySelectorAll('.pane').forEach(p=>p.classList.remove('on'));
+        $('pane-'+b.dataset.pane).classList.add('on');
+      };
+    });
+  }
+
+  function downloadJson(){
+    const data = $('json')._raw || {};
+    const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=(S.part.source||'part').replace(/\.stl$/,'')+'.features.json';
+    a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+    toast('已导出识别结果 JSON');
+  }
+
+  /* ================================================================== loop */
+  function loop(t){ draw(t); requestAnimationFrame(loop); }
+
+  function boot(){
+    initGL();
+    initParts();
+    bindUI();
+    loadPart(0);
+    window.addEventListener('resize', ()=>{ resize(); paintAll(); drawGraph(); });
+    resize();
+    setFlowIdle();
+    requestAnimationFrame(loop);
+    setTimeout(()=>runPipeline(), 900);
+  }
+  if (document.readyState==='complete' || document.readyState==='interactive') boot();
+  else window.addEventListener('DOMContentLoaded', boot);
+})();
+</script>
+</body>
+</html>
