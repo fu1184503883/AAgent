@@ -1,0 +1,19 @@
+# ---- 本地 QA / 预览截图（约 20 MB，演示与仓库均不需要；需要时用 tools/ 重新生成）----
+/shots/
+
+# ---- 根目录遗留的离线光栅化预览图（index.html 未引用任何图片）----
+/*_v.png
+/part?_*.png
+
+# ---- Python ----
+__pycache__/
+*.pyc
+*.pyo
+
+# ---- 系统 / 编辑器 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+.workbuddy/
