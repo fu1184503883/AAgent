@@ -451,7 +451,8 @@ pre.json{
 
       <div class="vtop">
         <div class="seg" id="modes">
-          <button data-mode="semantic" class="on">语义</button>
+          <button data-mode="raw" class="on">原始</button>
+          <button data-mode="semantic">语义</button>
           <button data-mode="instance">实例</button>
           <button data-mode="bottom">底面</button>
           <button data-mode="face">面片</button>
@@ -571,7 +572,7 @@ window.addEventListener('error', function(e){
   /* ================================================================== state */
   const S = {
     part:null, instanceOfFace:new Map(), faceClasses:null, selInstance:-1,
-    mode:'semantic', hidden:new Set(), run:false, revision:0,
+    mode:'raw', hidden:new Set(), run:false, revision:0,
     selFaces:new Set(),        // 面级选中（点单个面）
     hiddenFaces:new Set(),     // 逐面隐藏
     soloClass:null,            // 只看这个色桶，其余全隐藏
@@ -1041,7 +1042,14 @@ window.addEventListener('error', function(e){
   function colorOf(f){
     let rgb = STOCK.rgb;
     const cls = S.faceClasses.get(f) || '毛坯';
-    if (S.mode === 'semantic' || S.mode === 'instance'){
+    if (S.mode === 'raw'){
+      /* 「原始」模式：还原 STEP/STP 模型本身的外观 —— 统一金属灰，
+       * 不按特征分类着色，只看模型本来的几何形状。带一点点色相微差
+       * 让相邻 B-Rep 面略微可辨，但整体是同一材质，不像语义色那样花。 */
+      const h = 0.58 + 0.03*((f%7)/6 - 0.5);   // 色相在蓝灰附近轻微抖动
+      const v = 0.70 + 0.05*((f%5)/4 - 0.5);   // 亮度轻微抖动
+      rgb = hsv(h, 0.06, v);
+    } else if (S.mode === 'semantic' || S.mode === 'instance'){
       rgb = (CLASS[cls] || STOCK).rgb;
       if (S.mode === 'instance' && cls !== '毛坯'){
         // 同类别里按实例做色相抖动，否则一整片同色分不出个数
@@ -2142,8 +2150,8 @@ window.addEventListener('error', function(e){
         $('modes').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
         b.classList.add('on');
         S.mode = b.dataset.mode;
-        /* 面片模式下每个面一个色，不开边线就分不清面在哪儿 —— 自动打开 */
-        if (S.mode === 'face' && !S.showEdges){ S.showEdges = true; syncOpts(); }
+        /* 面片/原始模式下每个面靠边界线区分，不开边线就分不清面在哪儿 —— 自动打开 */
+        if ((S.mode === 'face' || S.mode === 'raw') && !S.showEdges){ S.showEdges = true; syncOpts(); }
         refresh();                       // 保留当前选中，只换配色口径
         if (S.mode==='bottom') toast('底面识别：'+S.bottomFaces.size+' 个特征底面');
       };
@@ -2197,7 +2205,7 @@ window.addEventListener('error', function(e){
         if (S.selInstance >= 0) zoomToInstance(S.selInstance); else fitCamera();
         return;
       }
-      const m = {'1':'semantic','2':'instance','3':'bottom','4':'face'}[e.key];
+      const m = {'0':'raw','1':'semantic','2':'instance','3':'bottom','4':'face'}[e.key];
       if (m){
         const btn = $('modes').querySelector(`button[data-mode="${m}"]`);
         if (btn) btn.click();
