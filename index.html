@@ -180,11 +180,55 @@ button{font-family:inherit}
   position:absolute; left:16px; bottom:16px; display:flex; flex-direction:column; gap:5px;
   padding:10px 12px; border-radius:11px; border:1px solid var(--line2);
   background:rgba(9,15,26,.86); backdrop-filter:blur(8px); pointer-events:auto;
+  max-height:min(60vh,440px); overflow-y:auto; overscroll-behavior:contain;
 }
 .legend .row{display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--txt2); cursor:pointer; padding:1px 0}
-.legend .row.off{opacity:.38}
+.legend .row:hover{color:var(--txt)}
+.legend .row.off{opacity:.34}
+.legend .row.solo{background:rgba(35,90,125,.42); border-radius:6px; box-shadow:0 0 0 1px rgba(55,196,240,.28) inset; padding:1px 5px; margin:0 -5px}
 .legend .sw{width:9px;height:9px;border-radius:3px;flex:none}
-.legend .n{margin-left:auto; font:10.5px var(--mono); color:var(--txt3)}
+.legend .lb{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+.legend .n{font:10.5px var(--mono); color:var(--txt3); flex:none}
+.legend .fine-toggle{
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  margin-top:7px; padding:6px 2px 0; border-top:1px solid var(--line);
+  font-size:10.5px; color:var(--txt3); letter-spacing:.5px; cursor:pointer;
+}
+.legend .fine-toggle:hover{color:var(--txt2)}
+.legend .fine-toggle span{color:var(--accent); font-size:10px}
+.legend .fine{display:flex; flex-direction:column; gap:3px; padding-top:5px}
+.legend .fine-row{font-size:10.5px; padding:1px 6px; border-radius:5px}
+.legend .fine-row.on{background:rgba(40,110,150,.38); box-shadow:0 0 0 1px rgba(55,196,240,.25) inset}
+
+.filterBar{
+  position:absolute; left:16px; top:58px; z-index:4; display:none; gap:6px; align-items:center; flex-wrap:wrap;
+  max-width:calc(100% - 32px); padding:6px 9px; border-radius:10px;
+  border:1px solid var(--line2); background:rgba(9,15,26,.92); backdrop-filter:blur(8px);
+  pointer-events:auto;
+}
+.fb-lab{font-size:10.5px; color:var(--txt3); letter-spacing:.7px}
+.fb-chip{
+  display:flex; align-items:center; gap:6px; font-size:11.5px; color:#cfe9ff;
+  border:1px solid #24506e; background:#0d2033; border-radius:7px; padding:3px 7px; cursor:pointer;
+  transition:.15s;
+}
+.fb-chip:hover{border-color:#3a7fa6; background:#12324b}
+.fb-chip i{font-style:normal; color:#6c8fa8; font-size:12px; line-height:1}
+.fb-chip:hover i{color:#9fd6ef}
+.fb-clear{
+  font-size:11.5px; color:var(--txt3); background:transparent; border:1px solid var(--line2);
+  border-radius:7px; padding:3px 8px; cursor:pointer;
+}
+.fb-clear:hover{color:var(--txt); border-color:#35576f}
+.seg.opt button.on{background:linear-gradient(180deg,#1a4a5e,#123444); color:#d6f4ff}
+
+.fsearch{display:flex; align-items:center; gap:7px; border:1px solid var(--line);
+  background:#0b1421; border-radius:9px; padding:6px 10px}
+.fsearch input{flex:1; min-width:0; background:transparent; border:0; outline:0;
+  color:var(--txt); font-size:12px; font-family:inherit}
+.fsearch input::placeholder{color:var(--txt3)}
+.fsearch span{font:10.5px var(--mono); color:var(--txt3); flex:none}
+.feat.hide{display:none}
 .hud{
   position:absolute; right:16px; bottom:16px; min-width:214px; padding:10px 12px;
   border-radius:11px; border:1px solid var(--line2); background:rgba(9,15,26,.88);
@@ -247,6 +291,7 @@ button{font-family:inherit}
   padding:1px 5px; border-radius:5px; cursor:pointer;
 }
 .feat .face.bot{border-color:#7a5a1f; color:#ffd58a; background:#241a0b}
+.feat .more{font:10.5px var(--mono); color:var(--txt3); padding:1px 4px; align-self:center}
 .confbar{height:2px; background:#121d2e; border-radius:2px; margin-top:7px; overflow:hidden}
 .confbar i{display:block;height:100%;background:linear-gradient(90deg,#37c4f0,#5eead4)}
 
@@ -410,6 +455,11 @@ pre.json{
           <button data-mode="bottom">底面</button>
           <button data-mode="face">面片</button>
         </div>
+        <div class="seg opt" id="viewOpts">
+          <button data-opt="fade" class="on" title="非选中的部分淡成半透明，保留上下文又不遮挡重点">淡出</button>
+          <button data-opt="hide" title="非选中的部分直接隐藏，只看选中的面">隐藏</button>
+          <button data-opt="edges" class="on" title="显示 B-Rep 面的边界线">边</button>
+        </div>
         <div class="vbtns">
           <button class="iconbtn on" id="vIso" title="等轴视图">ISO</button>
           <button class="iconbtn" id="vTop" title="俯视图">TOP</button>
@@ -418,15 +468,18 @@ pre.json{
         </div>
       </div>
 
-      <div class="hint" id="hint">左键拖动旋转 · 中键/右键拖动平移 · 滚轮朝光标缩放 · Shift+左键绕光标转 · 双击复位</div>
+      <div class="filterBar" id="filterBar"></div>
+
+      <div class="hint" id="hint">左键拖动旋转 · 中键/右键拖动平移 · 滚轮朝光标缩放 · 单击选面 · 双击选特征</div>
 
       <div class="legend" id="legend"></div>
       <div class="hud" id="hud">
         <h4>拾取信息</h4>
         <div class="line"><span>面 ID</span><span id="hFace">—</span></div>
-        <div class="line"><span>类型 / 类别</span><span id="hType">—</span></div>
+        <div class="line"><span>几何类型</span><span id="hType">—</span></div>
         <div class="line"><span>面积</span><span id="hArea">—</span></div>
         <div class="line"><span>所属特征</span><span id="hFeat">—</span></div>
+        <div class="line"><span>网络语义</span><span id="hFine">—</span></div>
       </div>
     </section>
 
@@ -440,6 +493,10 @@ pre.json{
 
       <div class="pane on" id="pane-feat">
         <div class="sum" id="sum"></div>
+        <div class="fsearch">
+          <input id="featQ" type="search" placeholder="搜特征：孔 / 型腔 / N3 / 面号 12" autocomplete="off" />
+          <span id="featCount"></span>
+        </div>
         <div id="featList" style="display:flex;flex-direction:column;gap:8px"></div>
         <div class="procnote" id="featNote"></div>
       </div>
@@ -468,6 +525,7 @@ pre.json{
 
   <footer class="foot">
     <i class="d"></i><span><b id="fState">就绪</b> · 演示模式（离线样例数据）</span>
+    <span id="fVis" style="color:var(--txt3)"></span>
     <span class="sp"></span>
     <span id="fInfo">AAGNet · RCIM 2024 · 权重 0.41M</span>
   </footer>
@@ -512,7 +570,17 @@ window.addEventListener('error', function(e){
   /* ================================================================== state */
   const S = {
     part:null, instanceOfFace:new Map(), faceClasses:null, selInstance:-1,
-    mode:'semantic', hidden:new Set(), run:false, revision:0
+    mode:'semantic', hidden:new Set(), run:false, revision:0,
+    selFaces:new Set(),        // 面级选中（点单个面）
+    hiddenFaces:new Set(),     // 逐面隐藏
+    soloClass:null,            // 只看这个色桶，其余全隐藏
+    soloFine:null,             // 只看这个细类（25 类之一）
+    fineOpen:false,            // 图例里「细类」是否展开
+    fadeMode:'ghost',          // 非焦点部分：ghost=淡出 / hide=完全隐藏
+    bgAlpha:0.46,              // 淡出时的不透明度
+    showEdges:true,
+    focused:false,             // 当前是否处于「有焦点」状态（供线框压暗用）
+    q:''                       // 特征清单搜索词
   };
 
   const $ = id => document.getElementById(id);
@@ -548,7 +616,14 @@ window.addEventListener('error', function(e){
   function loadPart(i){
     S.part = PARTS[i];
     S.part._decoded = S.part._decoded || decodePart(S.part);
+    /* 换零件 = 换语境，筛选状态必须清干净，否则会带着上一个件的类别名去隐藏新件的面 */
     S.selInstance = -1;
+    S.selFaces.clear();
+    S.hidden.clear();
+    S.hiddenFaces.clear();
+    S.soloClass = null;
+    S.soloFine = null;
+    S.q = '';
     S.revision++;
     buildFaceMap();
     // 底面集合：走网络时用 bottomMask（覆盖未成实例的底面），否则用实例里的 bottom
@@ -732,21 +807,32 @@ window.addEventListener('error', function(e){
     if (!gl){ document.body.insertAdjacentHTML('beforeend','<div style="position:fixed;inset:0;display:grid;place-items:center;color:#fff;background:#0a1120">当前浏览器不支持 WebGL</div>'); return; }
     GL.gl = gl;
 
+    /* 可见性 aVis 是逐顶点标量，三种取值：
+     *   1.0  前景：正常着色、不透明、写深度
+     *   0.5  背景：淡出（真 alpha，不写深度），用来「不遮挡但要能看出上下文」
+     *   0.0  隐藏：两个 pass 都裁剪掉
+     * 一次 drawArrays 只能有一种 alpha，所以 draw() 里分两趟画。 */
     const vs = `
-      attribute vec3 aPos; attribute vec3 aNrm; attribute vec3 aCol; attribute float aSel;
-      uniform mat4 uMVP; uniform mat4 uModel;
+      attribute vec3 aPos; attribute vec3 aNrm; attribute vec3 aCol;
+      attribute float aSel; attribute float aVis;
+      uniform mat4 uMVP; uniform mat4 uModel; uniform float uPass;
       varying vec3 vN; varying vec3 vC; varying float vS; varying vec3 vP;
       void main(){
         vec4 w = uModel * vec4(aPos,1.0);
         vP = w.xyz;
         vN = (uModel * vec4(aNrm,0.0)).xyz;
         vC = aCol; vS = aSel;
-        gl_Position = uMVP * vec4(aPos,1.0);
+        float show = uPass < 0.5
+          ? step(0.75, aVis)
+          : step(0.25, aVis) * (1.0 - step(0.75, aVis));
+        gl_Position = mix(vec4(2.0,2.0,2.0,1.0), uMVP*vec4(aPos,1.0), show);
       }`;
     const fs = `
       precision mediump float;
       varying vec3 vN; varying vec3 vC; varying float vS; varying vec3 vP;
-      uniform float uDim; uniform vec3 uSel; uniform float uPulse;
+      uniform vec3 uSel; uniform float uPulse;
+      /* uPass 两个 shader 都要用，精度声明必须一致，否则 link 直接失败 */
+      uniform highp float uPass; uniform float uBg;
       void main(){
         vec3 N = normalize(vN);
         if (dot(N, vec3(0.0,0.0,1.0)) < 0.0) N = -N;
@@ -759,24 +845,36 @@ window.addEventListener('error', function(e){
         float f = 0.30 + 0.66*d1 + 0.20*d2 + 0.18*rim;
         vec3 col = base * f;
         col += vec3(0.02,0.05,0.07) * rim;
-        if (uDim > 0.5 && vS < 0.5) {
-          float g = dot(base, vec3(0.30,0.36,0.45));
-          col = mix(col, vec3(g)*0.55, 0.62);
+        float a = 1.0;
+        if (uPass > 0.5) {
+          /* 深色界面上单纯把 alpha 压到 0.15，混合结果就是背景黑，等于消失。
+           * 所以先把颜色抬到一个固定的灰蓝基准（保留一点法线明暗），
+           * 再用 alpha 做「透过去看」——形状和体积感都在，但完全不抢主色。 */
+          float g = dot(col, vec3(0.33, 0.38, 0.45));
+          vec3 ghost = vec3(0.40, 0.47, 0.57) * (0.55 + 0.9 * g);
+          col = mix(col, ghost, 0.78);
+          a = uBg;
         }
         if (vS > 0.5) {
-          col = mix(col, uSel, 0.45*uPulse);
-          col *= 1.12;
+          /* 高亮不是把本色洗成青色，而是「提亮 + 边缘发光」：
+           * 混色比例低，类别色还认得出来；边缘那圈亮光负责把注意力拉过来。 */
+          float r = pow(1.0 - max(dot(N,V),0.0), 2.0);
+          col = col * (1.08 + 0.20*uPulse) + vec3(0.10,0.32,0.44) * r * uPulse;
         }
-        gl_FragColor = vec4(col, 1.0);
+        gl_FragColor = vec4(col, a);
       }`;
     const pv = `
       attribute vec3 aPos; uniform mat4 uMVP; void main(){ gl_Position = uMVP*vec4(aPos,1.0); }`;
     const pf = `
       precision mediump float; void main(){ gl_FragColor = vec4(1.0,1.0,1.0,1.0); }`;
     const pidvs = `
-      attribute vec3 aPos; attribute float aFid; uniform mat4 uMVP;
+      attribute vec3 aPos; attribute float aFid; attribute float aVis; uniform mat4 uMVP;
       varying float vF;
-      void main(){ vF = aFid; gl_Position = uMVP*vec4(aPos,1.0); }`;
+      void main(){
+        vF = aFid;
+        float show = step(0.25, aVis);
+        gl_Position = mix(vec4(2.0,2.0,2.0,1.0), uMVP*vec4(aPos,1.0), show);
+      }`;
     const pidfs = `
       precision mediump float; varying float vF;
       void main(){
@@ -791,22 +889,39 @@ window.addEventListener('error', function(e){
     GL.line = makeProg(pv, `precision mediump float; uniform vec3 uColor; void main(){ gl_FragColor=vec4(uColor,1.0); }`);
     GL.pick = makeProg(pidvs, pidfs);
     GL.buf = {pos:gl.createBuffer(), nrm:gl.createBuffer(), col:gl.createBuffer(), sel:gl.createBuffer(),
-              fid:gl.createBuffer(), line:gl.createBuffer(), selLine:gl.createBuffer()};
+              vis:gl.createBuffer(), fid:gl.createBuffer(), line:gl.createBuffer(), selLine:gl.createBuffer()};
     GL.rand = {lineCount:0, selCount:0};
     GL.cam = {q:qFromAzEl(0.72, 0.52), dist:2.35, target:[0,0,0], fov:0.52};
     GL.viewAnim = null;
     bindEvents();
   }
 
+  /* shader 编译失败原来只进 console，页面表现为「什么都没有」，排查很难。
+   * 统一走这里：既进 console，也在页面上挂一条红条。 */
+  function glErr(msg){
+    console.error('[GL] ' + msg);
+    let d = document.getElementById('dbg');
+    if (!d){
+      d = document.createElement('div'); d.id = 'dbg';
+      d.style.cssText = 'position:fixed;left:0;right:0;bottom:0;z-index:999;background:#3a0d12;'
+        + 'color:#ffd7d7;font:12px/1.5 monospace;padding:8px 12px;max-height:40%;overflow:auto;white-space:pre-wrap';
+      document.body.appendChild(d);
+    }
+    d.textContent += '[GL] ' + msg + '\n';
+  }
+
   function makeProg(vsSrc, fsSrc){
     const gl = GL.gl;
-    const sh = (t,src)=>{ const s=gl.createShader(t); gl.shaderSource(s,src); gl.compileShader(s);
-      if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; };
+    const sh = (t,src,label)=>{
+      const s=gl.createShader(t); gl.shaderSource(s,src); gl.compileShader(s);
+      if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) glErr(label+' 编译失败: '+gl.getShaderInfoLog(s));
+      return s;
+    };
     const p = gl.createProgram();
-    gl.attachShader(p, sh(gl.VERTEX_SHADER, vsSrc));
-    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fsSrc));
+    gl.attachShader(p, sh(gl.VERTEX_SHADER, vsSrc, 'vertex'));
+    gl.attachShader(p, sh(gl.FRAGMENT_SHADER, fsSrc, 'fragment'));
     gl.linkProgram(p);
-    if(!gl.getProgramParameter(p,gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(p));
+    if(!gl.getProgramParameter(p,gl.LINK_STATUS)) glErr('link 失败: ' + gl.getProgramInfoLog(p));
     return p;
   }
 
@@ -819,6 +934,8 @@ window.addEventListener('error', function(e){
     gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.col); gl.bufferData(gl.ARRAY_BUFFER, cols, gl.DYNAMIC_DRAW);
     const sel = new Float32Array(D.tri*3);
     gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.sel); gl.bufferData(gl.ARRAY_BUFFER, sel, gl.DYNAMIC_DRAW);
+    const vis = new Float32Array(D.tri*3); vis.fill(1);
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.vis); gl.bufferData(gl.ARRAY_BUFFER, vis, gl.DYNAMIC_DRAW);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
     /* 线框是为了「看清拓扑」。片体上每片面很小，4500 个面全画出来是一张密不透风的网，
      * 反而看不出形面 —— 超过 24 万顶点就等间隔抽样保留骨架，而不是整片不画。 */
@@ -846,54 +963,111 @@ window.addEventListener('error', function(e){
     return out;
   }
 
+  /* 单个面的底色调（与可见性无关，可见性单独算） */
+  function colorOf(f){
+    let rgb = STOCK.rgb;
+    const cls = S.faceClasses.get(f) || '毛坯';
+    if (S.mode === 'semantic' || S.mode === 'instance'){
+      rgb = (CLASS[cls] || STOCK).rgb;
+      if (S.mode === 'instance' && cls !== '毛坯'){
+        // 同类别里按实例做色相抖动，否则一整片同色分不出个数
+        const ii = S.part._decoded.instOfFace.get(f);
+        if (ii !== undefined){
+          const hsv0 = rgb2hsv(rgb);
+          const step = ((ii*5)%7)/7 - 0.5;      // -0.5 .. 0.5
+          const h = (hsv0[0] + step*0.17 + 1)%1;  // ±0.085 of the circle
+          const v = 0.84 - 0.14*(((ii*3)%3)/2);
+          rgb = hsv(h, hsv0[1], v);
+        }
+      }
+    } else if (S.mode === 'bottom'){
+      const isBottom = S.bottomFaces && S.bottomFaces.has(f);
+      rgb = isBottom ? [1.0, 0.56, 0.16] : [0.32, 0.38, 0.45];
+    } else if (S.mode === 'face'){
+      const h = (f*0.6180339887)%1;
+      rgb = hsv(h, 0.58, 0.92);      // 面片模式要分清「每个面」，饱和度压不住就看不出分区
+    }
+    return rgb;
+  }
+
+  /* 一个面的三种命运：1 前景 / 0.5 淡出 / 0 隐藏。
+   * 优先级：逐面隐藏 > 类别隐藏 > 只看某细类 > 只看某色桶 > 焦点 > 全部可见。 */
+  function visOf(f, focus){
+    if (S.hiddenFaces.has(f)) return 0;
+    const cls = S.faceClasses.get(f) || '毛坯';
+    if (S.hidden.has(cls)) return 0;
+    /* 「只看某一类」不把别的东西抹干净：默认让它们淡出，
+     * 否则用户看不出这个孔长在零件哪个面上，等于丢掉了空间上下文。 */
+    const rest = (S.fadeMode === 'hide') ? 0 : 0.5;
+    if (S.soloFine !== null){
+      const net = S.part._net;
+      const k = (net && net.faceClass && f < net.N) ? net.faceClass[f] : -1;
+      return k === S.soloFine ? 1 : rest;
+    }
+    if (S.soloClass) return cls === S.soloClass ? 1 : rest;
+    if (!focus) return 1;
+    if (focus.has(f)) return 1;
+    return rest;
+  }
+
+  function focusNow(){
+    if (S.selInstance >= 0 && S.part.instances[S.selInstance]) return new Set(S.part.instances[S.selInstance].faces);
+    if (S.selFaces && S.selFaces.size) return S.selFaces;
+    return null;
+  }
+
   function setColors(){
     const gl = GL.gl, D = S.part._decoded;
-    const cols = new Float32Array(D.pos.length);
-    // palette per face for "face" mode
+    /* 三个大数组按零件缓存复用：4518 面的件每次 new 出去 3×6 MB，
+     * GC 抖动比算颜色本身还贵（实测 276ms → 150ms 左右）。 */
+    if (!D._cols || D._cols.length !== D.pos.length){
+      D._cols = new Float32Array(D.pos.length);
+      D._vis  = new Float32Array(D.tri*3);
+      D._sel  = new Float32Array(D.tri*3);
+    }
+    const cols = D._cols, vis = D._vis, sel = D._sel;
+    sel.fill(0);                       // 上一轮的选中标记必须清掉
+    const focus = focusNow();
+    const N = S.part.faces.length;
+    /* 面级缓存：一个面几百个三角形，逐三角形重复算颜色/可见性是纯浪费。
+     * 按 fid 下标缓存，比每三角形查 Map 快一个量级。 */
+    const cCache = new Array(N), vCache = new Array(N);
+
     for (let t=0;t<D.tri;t++){
       const f = D.fid[t];
-      let rgb = STOCK.rgb;
-      const cls = S.faceClasses.get(f) || '毛坯';
-      if (S.mode === 'semantic' || S.mode === 'instance'){
-        if (!S.hidden.has(cls)) rgb = CLASS[cls].rgb;
-        if (S.mode === 'instance'){
-          // per-instance hue jitter inside the category family: same class, distinct instances
-          if (cls !== '毛坯'){
-            const ii = D.instOfFace.get(f);
-            if (ii !== undefined){
-              const hsv0 = rgb2hsv(rgb);
-              const step = ((ii*5)%7)/7 - 0.5;      // -0.5 .. 0.5
-              const h = (hsv0[0] + step*0.17 + 1)%1;  // ±0.085 of the circle
-              const v = 0.84 - 0.14*(((ii*3)%3)/2);
-              rgb = hsv(h, hsv0[1], v);
-            }
-          }
-        }
-      } else if (S.mode === 'bottom'){
-        const isBottom = S.bottomFaces && S.bottomFaces.has(f);
-        rgb = isBottom ? [1.0, 0.56, 0.16] : [0.32, 0.38, 0.45];
-        if (isBottom && S.hidden.has('底面')) rgb = [0.32, 0.38, 0.45];
-      } else if (S.mode === 'face'){
-        const h = (f*0.6180339887)%1;
-        rgb = hsv(h, 0.42, 0.88);
-      }
-      for (let k=0;k<3;k++){
-        const o=t*9+k*3;
-        cols[o]=rgb[0]; cols[o+1]=rgb[1]; cols[o+2]=rgb[2];
-      }
+      const ok = (f >= 0 && f < N);
+      let rgb = ok ? cCache[f] : undefined;
+      if (rgb === undefined){ rgb = colorOf(f); if (ok) cCache[f] = rgb; }
+      let v = ok ? vCache[f] : undefined;
+      if (v === undefined){ v = visOf(f, focus); if (ok) vCache[f] = v; }
+      const o = t*9, s = t*3;
+      cols[o]=cols[o+3]=cols[o+6]=rgb[0];
+      cols[o+1]=cols[o+4]=cols[o+7]=rgb[1];
+      cols[o+2]=cols[o+5]=cols[o+8]=rgb[2];
+      vis[s]=vis[s+1]=vis[s+2]=v;
+      if (focus && focus.has(f)) sel[s]=sel[s+1]=sel[s+2]=1;
     }
     gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.col);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, cols);
-    // selection flags
-    const sel = new Float32Array(D.tri*3);
-    if (S.selInstance>=0){
-      const inst = S.part.instances[S.selInstance];
-      const set = new Set(inst.faces);
-      for (let t=0;t<D.tri;t++) if (set.has(D.fid[t])) sel[t*3]=sel[t*3+1]=sel[t*3+2]=1;
-    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.vis);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, vis);
     gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.sel);
     gl.bufferSubData(gl.ARRAY_BUFFER, 0, sel);
+    S._visStats = countVis(vCache, N);
+    S._ghost = S._visStats.ghost;      // draw() 靠它决定要不要跑第二趟
     updateSelEdges();
+  }
+
+  /* 筛选条/页脚要报「当前可见多少面」，顺手统出来 */
+  function countVis(vCache, N){
+    let full=0, ghost=0, gone=0;
+    for (let i=0;i<N;i++){
+      const v = vCache[i];
+      if (v === undefined || v === 1) full++;
+      else if (v === 0.5) ghost++;
+      else gone++;
+    }
+    return {full, ghost, gone, total:N};
   }
 
   function rgb2hsv(c){
@@ -1039,24 +1213,41 @@ window.addEventListener('error', function(e){
     const M = mvp();
     const P = GL.prog; gl.useProgram(P);
     const alb = gl.getAttribLocation(P,'aPos'), anb=gl.getAttribLocation(P,'aNrm'),
-          acb=gl.getAttribLocation(P,'aCol'), asb=gl.getAttribLocation(P,'aSel');
+          acb=gl.getAttribLocation(P,'aCol'), asb=gl.getAttribLocation(P,'aSel'),
+          avb=gl.getAttribLocation(P,'aVis');
     bindAttr(alb, GL.buf.pos, 3); bindAttr(anb, GL.buf.nrm, 3);
     bindAttr(acb, GL.buf.col, 3); bindAttr(asb, GL.buf.sel, 1);
+    bindAttr(avb, GL.buf.vis, 1);
     gl.uniformMatrix4fv(gl.getUniformLocation(P,'uMVP'), false, new Float32Array(M));
     gl.uniformMatrix4fv(gl.getUniformLocation(P,'uModel'), false, new Float32Array(modelMat()));
-    gl.uniform1f(gl.getUniformLocation(P,'uDim'), S.selInstance>=0?1:0);
     gl.uniform3f(gl.getUniformLocation(P,'uSel'), 0.16, 0.82, 1.0);
     gl.uniform1f(gl.getUniformLocation(P,'uPulse'), 0.55+0.45*Math.sin(pulse/260));
+    gl.uniform1f(gl.getUniformLocation(P,'uBg'), S.bgAlpha);
+    const uPass = gl.getUniformLocation(P,'uPass');
+    const triN = S.part._decoded.tri*3;
+
+    /* pass 1：前景（不透明）。先画，把深度立住。 */
+    gl.uniform1f(uPass, 0.0);
+    gl.depthMask(true);
     gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.2, 1.6);
-    gl.drawArrays(gl.TRIANGLES, 0, S.part._decoded.tri*3);
+    gl.drawArrays(gl.TRIANGLES, 0, triN);
     gl.disable(gl.POLYGON_OFFSET_FILL);
 
+    /* pass 2：背景（淡出）。没有淡出对象就整段跳过 ——
+     * 4518 面的件有 152 万个三角形，这一趟白跑等于白白多一倍顶点处理。 */
+    if (S._ghost > 0){
+      gl.uniform1f(uPass, 1.0);
+      gl.drawArrays(gl.TRIANGLES, 0, triN);
+    }
+    gl.depthMask(true);
+
     // feature edges
-    if (GL.rand.lineCount){
+    if (GL.rand.lineCount && S.showEdges){
       const LP = GL.line; gl.useProgram(LP);
       bindAttr(gl.getAttribLocation(LP,'aPos'), GL.buf.line, 3);
       gl.uniformMatrix4fv(gl.getUniformLocation(LP,'uMVP'), false, new Float32Array(M));
-      gl.uniform3f(gl.getUniformLocation(LP,'uColor'), 0.04,0.06,0.09);
+      const dark = S.focused ? 0.020 : 0.040;      // 有焦点时压暗，别和前景抢
+      gl.uniform3f(gl.getUniformLocation(LP,'uColor'), dark, dark*1.5, dark*2.2);
       gl.drawArrays(gl.LINES, 0, GL.rand.lineCount);
     }
     // selection outline
@@ -1099,6 +1290,7 @@ window.addEventListener('error', function(e){
     gl.useProgram(P);
     bindAttr(gl.getAttribLocation(P,'aPos'), GL.buf.pos, 3);
     bindAttr(gl.getAttribLocation(P,'aFid'), GL.buf.fid, 1);
+    bindAttr(gl.getAttribLocation(P,'aVis'), GL.buf.vis, 1);
     gl.uniformMatrix4fv(gl.getUniformLocation(P,'uMVP'), false, new Float32Array(mvp()));
     gl.drawArrays(gl.TRIANGLES, 0, S.part._decoded.tri*3);
     const dpr = Math.min(window.devicePixelRatio||1,2);
@@ -1214,7 +1406,14 @@ window.addEventListener('error', function(e){
     }, {passive:false});
     cv.addEventListener('auxclick', e=>{ if (e.button===1) e.preventDefault(); });
     cv.addEventListener('contextmenu', e=>e.preventDefault());
-    cv.addEventListener('dblclick', ()=>{ fitCamera(); });
+    cv.addEventListener('dblclick', e=>{
+      /* 双击面 = 选中它所属的整个特征；双击空白 = 复位视图 */
+      const rect=cv.getBoundingClientRect();
+      const f = pickAt(e.clientX-rect.left, e.clientY-rect.top);
+      const ii = (f>=0) ? S.part._decoded.instOfFace.get(f) : undefined;
+      if (ii !== undefined) selectInstance(ii, true);
+      else fitCamera();
+    });
     cv.style.cursor='grab';
   }
 
@@ -1265,10 +1464,8 @@ window.addEventListener('error', function(e){
   function clickAt(e){
     const rect=$('gl').getBoundingClientRect();
     const f = pickAt(e.clientX-rect.left, e.clientY-rect.top);
-    if (f<0){ selectInstance(-1); return; }
-    const ii = S.part._decoded.instOfFace.get(f);
-    if (ii!==undefined) selectInstance(ii, true);
-    else { selectInstance(-1); hudFace(f); }
+    if (f<0){ clearSelection(); return; }
+    selectFaces(new Set([f]), e.shiftKey || e.ctrlKey || e.metaKey);
   }
 
   /* 视角切换：滑过去而不是硬跳，跟 3DE 的视点行为一致 */
@@ -1283,6 +1480,133 @@ window.addEventListener('error', function(e){
     c.target=[0,0,0]; c.dist=2.30;
     INERT.rv=[0,0]; INERT.pv=[0,0];
     setView(0.70, 0.46, true);
+  }
+
+  /* ============================================================ 可见性 / 筛选 */
+  /* 所有「谁该亮、谁该淡、谁该消失」的改动最后都落到这里：
+   * 重算颜色与可见性 → 重画 → 同步筛选条 / 图例 / 统计。 */
+  function refresh(){
+    S.focused = !!(S.soloClass || S.soloFine !== null || S.selInstance >= 0 ||
+                    (S.selFaces && S.selFaces.size) || S.hidden.size || S.hiddenFaces.size);
+    paintAll();
+    renderFilterBar();
+    renderLegend();
+    renderStats();
+  }
+
+  function fineLabel(k){
+    const n = S.part && S.part._net;
+    return (n && n.labels && n.labels[k]) ? n.labels[k] : ('细类 #' + k);
+  }
+
+  function clearAllFilters(){
+    S.soloClass = null; S.soloFine = null;
+    S.hidden.clear(); S.hiddenFaces.clear();
+    S.selInstance = -1; S.selFaces.clear();
+    document.querySelectorAll('.feat').forEach(el=> el.classList.remove('sel'));
+    hudClear(); refresh(); drawGraph();
+    toast('已恢复全部显示');
+  }
+
+  function renderFilterBar(){
+    const bar = $('filterBar'); if (!bar) return;
+    const chips = [];
+    if (S.soloClass) chips.push(['只看 ' + S.soloClass, ()=>{ S.soloClass = null; refresh(); }]);
+    if (S.soloFine !== null) chips.push(['细类 ' + fineLabel(S.soloFine), ()=>{ S.soloFine = null; refresh(); }]);
+    if (S.selInstance >= 0){
+      const it = S.part.instances[S.selInstance];
+      chips.push(['选中 ' + (it ? it.key + ' ' + it.cls : ''), clearSelection]);
+    }
+    if (S.selFaces && S.selFaces.size) chips.push(['选中 ' + S.selFaces.size + ' 面', clearSelection]);
+    if (S.hidden.size) chips.push(['已隐藏 ' + S.hidden.size + ' 类', ()=>{ S.hidden.clear(); refresh(); }]);
+    if (S.hiddenFaces.size) chips.push(['已隐藏 ' + S.hiddenFaces.size + ' 面', ()=>{ S.hiddenFaces.clear(); refresh(); }]);
+
+    const hint = $('hint');
+    if (!chips.length){
+      bar.style.display = 'none'; bar.innerHTML = '';
+      if (hint) hint.style.display = '';
+      return;
+    }
+    if (hint) hint.style.display = 'none';      // 筛选条占了这个位置，提示语让位
+    bar.style.display = 'flex';
+    bar.innerHTML = '<span class="fb-lab">筛选</span>'
+      + chips.map((c,i)=>`<button class="fb-chip" data-i="${i}">${c[0]}<i>×</i></button>`).join('')
+      + '<button class="fb-clear">全部显示</button>';
+    bar.querySelectorAll('.fb-chip').forEach(b=>{ b.onclick = ()=> chips[Number(b.dataset.i)][1](); });
+    bar.querySelector('.fb-clear').onclick = clearAllFilters;
+  }
+
+  function renderStats(){
+    const st = S._visStats, el = $('fVis');
+    if (!el) return;
+    if (!st){ el.textContent = ''; return; }
+    const bits = [];
+    if (st.ghost) bits.push('淡出 ' + st.ghost);
+    if (st.gone) bits.push('隐藏 ' + st.gone);
+    el.textContent = bits.length
+      ? `可见 ${st.full} / ${st.total} 面 · ${bits.join(' · ')}`
+      : `全部 ${st.total} 面可见`;
+  }
+
+  function renderLegend(){
+    const p = S.part, host = $('legend');
+    if (!p || !host) return;
+    const order = ['通孔','盲孔','型腔','槽','台阶','倒角','圆角','毛坯'];
+    const rows = order.map(c=>{
+      const n = p.faces.filter(f=>(S.faceClasses.get(f.id)||'毛坯')===c).length;
+      if (!n) return '';
+      const off = (S.hidden.has(c) || (S.soloClass && S.soloClass !== c)) ? ' off' : '';
+      const solo = S.soloClass === c ? ' solo' : '';
+      return `<div class="row${off}${solo}" data-c="${c}" title="单击隐藏/显示 · Shift+单击只看这一类">`
+        + `<i class="sw" style="background:${(CLASS[c]||STOCK).hex}"></i>`
+        + `<span class="lb">${c}</span><span class="n">${n}</span></div>`;
+    }).join('');
+
+    /* 细类：网络 25 类输出里真正被激活的那几类，按面数排序。
+     * 上面 8 行是页面压过的色桶，下面这层才是语义任务的原样结果。 */
+    let fineBox = '';
+    const net = p._net;
+    if (net && net.faceClass && net.labels){
+      const cnt = {};
+      for (let i=0;i<net.N;i++){ const k = net.faceClass[i]; if (k>=0) cnt[k] = (cnt[k]||0)+1; }
+      const list = Object.keys(cnt).map(Number).sort((a,b)=> cnt[b] - cnt[a]);
+      if (list.length){
+        fineBox = `<div class="fine-toggle" id="fineToggle">细类 ${list.length} 项<span>${S.fineOpen?'收起':'展开'}</span></div>`
+          + `<div class="fine" id="fineList"${S.fineOpen?'':' style="display:none"'}>`
+          + list.map(k=>{
+              const bk = net.bucketOf[k];
+              const on = S.soloFine === k ? ' on' : '';
+              return `<div class="row fine-row${on}" data-k="${k}" title="只显示这一类面">`
+                + `<i class="sw" style="background:${(CLASS[bk]||STOCK).hex}"></i>`
+                + `<span class="lb">${net.labels[k]}</span><span class="n">${cnt[k]}</span></div>`;
+            }).join('')
+          + `</div>`;
+      }
+    }
+    host.innerHTML = rows + fineBox;
+    host.querySelectorAll('.row[data-c]').forEach(r=>{
+      r.onclick = ev=>{
+        const c = r.dataset.c;
+        if (ev.shiftKey){
+          S.soloClass = (S.soloClass === c) ? null : c;
+          S.soloFine = null; S.hidden.clear();
+        } else {
+          if (S.soloClass === c) S.soloClass = null;
+          if (S.hidden.has(c)) S.hidden.delete(c); else S.hidden.add(c);
+        }
+        refresh();
+      };
+    });
+    host.querySelectorAll('.fine-row').forEach(r=>{
+      r.onclick = ()=>{
+        const k = Number(r.dataset.k);
+        S.soloFine = (S.soloFine === k) ? null : k;
+        S.soloClass = null;
+        refresh();
+      };
+    });
+    const ft = $('fineToggle');
+    if (ft) ft.onclick = ()=>{ S.fineOpen = !S.fineOpen; renderLegend(); };
   }
 
   /* ================================================================== panels */
@@ -1317,12 +1641,36 @@ window.addEventListener('error', function(e){
       ['特征底面', S.bottomFaces.size, ''],
     ].map(([k,v,u])=>`<div class="cell"><b>${v}<em>${u}</em></b><span>${k}</span></div>`).join('');
 
-    // feature list
+    renderFeatList();
+    renderLegend();
+
+    /* 走网络且拿到 bottomMask 时，底面集合要保留「没成实例的底面」，
+     * 不能再用 instances 覆盖一遍（老代码在这里把 mask 的结果冲掉了）。 */
+    if (!(p._net && p._net.bottomMask)){
+      S.bottomFaces = new Set(p.instances.map(i=>i.bottom).filter(x=>x!==null));
+    }
+
+    renderProc();
+    renderJson();
+    renderFilterBar();
+    renderStats();
+  }
+
+  function renderFeatList(){
+    const p = S.part, kw = (S.q||'').trim().toLowerCase();
+    let shown = 0;
     const list = p.instances.map((it,i)=>{
       const col = (CLASS[it.bucket || it.cls] || CLASS['毛坯']).hex;
-      const faces = it.faces.map(f=>`<span class="face${f===it.bottom?' bot':''}" data-f="${f}">F${f}</span>`).join('');
+      /* 4518 面的件上单个特征可能有 200+ 面，全列出来一张卡就把列表撑爆了，
+       * 只列前 12 个，其余折成「+N」。 */
+      const MAXF = 12;
+      const faces = it.faces.slice(0, MAXF).map(f=>`<span class="face${f===it.bottom?' bot':''}" data-f="${f}">F${f}</span>`).join('')
+        + (it.faces.length > MAXF ? `<span class="more">+${it.faces.length - MAXF}</span>` : '');
       const params = it.params.map(([k,v])=>`${k} <u>${v}</u>`).join(' · ');
-      return `<div class="feat" data-i="${i}" style="border-left-color:${col}">
+      const hay = (it.cls + ' ' + (it.en||'') + ' ' + it.key + ' ' + it.faces.join(' ')).toLowerCase();
+      const hide = kw && hay.indexOf(kw) < 0;
+      if (!hide) shown++;
+      return `<div class="feat${hide?' hide':''}${i===S.selInstance?' sel':''}" data-i="${i}" style="border-left-color:${col}">
         <div class="head">
           <span class="nm" style="color:${col}">${it.cls}</span>
           ${it.en ? `<span class="kid" style="opacity:.55">${it.en}</span>` : ''}
@@ -1337,31 +1685,45 @@ window.addEventListener('error', function(e){
     $('featList').innerHTML = list;
     $('featList').querySelectorAll('.feat').forEach(el=>{
       el.onclick = ()=> selectInstance(Number(el.dataset.i), true);
+      el.ondblclick = ()=> zoomToInstance(Number(el.dataset.i));   // 双击钻到该特征
     });
     $('featList').querySelectorAll('.face').forEach(el=>{
       el.onclick = ev=>{ ev.stopPropagation(); focusFace(Number(el.dataset.f)); };
     });
-    $('featNote').innerHTML = `共 ${p.instances.length} 个实例、${p.faces.length} 个 B-Rep 面；其中 ${p.faces.length-[...S.faceClasses.keys()].length} 个面未归入特征（毛坯面 / 未识别）。点击实例可在三维视图中高亮其面集合。`;
+    const fc = $('featCount');
+    if (fc) fc.textContent = kw ? (shown + '/' + p.instances.length) : String(p.instances.length);
+  }
 
-    // legend
-    const order = ['通孔','盲孔','型腔','槽','台阶','倒角','圆角','毛坯'];
-    $('legend').innerHTML = order.map(c=>{
-      const n = (c==='毛坯' && !p._net)
-        ? (p.faces.length - S.faceClasses.size)
-        : p.faces.filter(f=>(S.faceClasses.get(f.id)||'毛坯')===c).length;
-      if (!n) return '';
-      const off = S.hidden.has(c)?' off':'';
-      return `<div class="row${off}" data-c="${c}"><i class="sw" style="background:${CLASS[c].hex}"></i>${c}<span class="n">${n} 面</span></div>`;
-    }).join('');
-    $('legend').querySelectorAll('.row').forEach(r=>{
-      r.onclick = ()=>{ const c=r.dataset.c; if (S.hidden.has(c)) S.hidden.delete(c); else S.hidden.add(c); setColors(); renderPanels(); };
-    });
+  /* 双击特征 → 把相机挪到该特征的包围盒，转一圈就能看细节 */
+  function instBounds(i){
+    const it = S.part.instances[i], D = S.part._decoded;
+    if (!it) return null;
+    const set = new Set(it.faces);
+    let mn=[1e9,1e9,1e9], mx=[-1e9,-1e9,-1e9];
+    for (let t=0;t<D.tri;t++){
+      if (!set.has(D.fid[t])) continue;
+      const o = t*9;
+      for (let k=0;k<9;k+=3){
+        const x=D.pos[o+k], y=D.pos[o+k+1], z=D.pos[o+k+2];
+        if (x<mn[0]) mn[0]=x; if (y<mn[1]) mn[1]=y; if (z<mn[2]) mn[2]=z;
+        if (x>mx[0]) mx[0]=x; if (y>mx[1]) mx[1]=y; if (z>mx[2]) mx[2]=z;
+      }
+    }
+    if (mn[0] > mx[0]) return null;
+    return {
+      c: [(mn[0]+mx[0])/2, (mn[1]+mx[1])/2, (mn[2]+mx[2])/2],
+      r: Math.max(Math.hypot(mx[0]-mn[0], mx[1]-mn[1], mx[2]-mn[2])/2, 0.04)
+    };
+  }
 
-    // bottom faces set
-    S.bottomFaces = new Set(p.instances.map(i=>i.bottom).filter(x=>x!==null));
-
-    renderProc();
-    renderJson();
+  function zoomToInstance(i){
+    const b = instBounds(i);
+    if (!b){ toast('该特征没有可定位的几何'); return; }
+    const c = GL.cam;
+    c.target = b.c.slice();
+    c.dist = Math.max(0.40, Math.min(3.2, b.r*4.8));
+    INERT.rv=[0,0]; INERT.pv=[0,0]; GL.viewAnim = null;
+    selectInstance(i, true);
   }
 
   function renderProc(){
@@ -1447,11 +1809,13 @@ window.addEventListener('error', function(e){
       pos.set(f.id, [x, y]);
     });
     // edges
+    const focus = focusNow();
     ctx.lineWidth=1;
     p.edges.forEach(([a,b])=>{
       const A=pos.get(a), B=pos.get(b); if(!A||!B) return;
+      if (!visOf(a, focus) || !visOf(b, focus)) return;    // 被筛掉的面，边上也不画
       const clsA=S.faceClasses.get(a), clsB=S.faceClasses.get(b);
-      const same = clsA && clsA===clsB && (S.selInstance<0 || true);
+      const same = clsA && clsA===clsB;
       ctx.strokeStyle = same? 'rgba(80,170,210,.34)' : 'rgba(70,95,125,.22)';
       ctx.beginPath(); ctx.moveTo(A[0],A[1]); ctx.lineTo(B[0],B[1]); ctx.stroke();
     });
@@ -1460,11 +1824,13 @@ window.addEventListener('error', function(e){
     p.faces.forEach(f=>{
       const P=pos.get(f.id);
       const cls=S.faceClasses.get(f.id)||'毛坯';
-      const col = CLASS[cls].hex;
-      const selInst = S.selInstance>=0 && S.part.instances[S.selInstance].faces.includes(f.id);
+      const vis = visOf(f.id, focus);
+      if (!vis) return;
+      const col = (CLASS[cls]||STOCK).hex;
+      const selInst = !!(focus && focus.has(f.id));
       const r = selInst?nr*1.6:nr;
       ctx.beginPath(); ctx.arc(P[0],P[1],r,0,7);
-      ctx.fillStyle = col; ctx.globalAlpha = S.selInstance>=0 && !selInst ? 0.32 : 0.92;
+      ctx.fillStyle = col; ctx.globalAlpha = vis===0.5 ? 0.24 : 0.92;
       ctx.fill(); ctx.globalAlpha=1;
       if (selInst){ ctx.strokeStyle='rgba(140,240,255,.9)'; ctx.lineWidth=1.6; ctx.stroke(); }
     });
@@ -1498,13 +1864,32 @@ window.addEventListener('error', function(e){
       BSpline:'B 样条曲面',Other:'其它曲面','Freeform/Cone':'自由曲面'})[f.type]||f.type;
     $('hArea').textContent = fmt((f.area||0)/S.areaTotal*100, 1)+' % (面占比)';    const it = S.part.instances.find(i=>i.faces.includes(fid));
     $('hFeat').textContent = it? `${it.cls} ${it.key}` : '毛坯 / 未分类';
+    /* 网络对这个面的原始判断：25 类里选了哪一类、概率多少。
+     * 上面 hType 是几何类型（平面/圆柱…），这一行才是 AAGNet 的语义输出。 */
+    const hf = $('hFine'), net = S.part._net;
+    if (hf){
+      if (net && net.faceClass && net.labels && fid >= 0 && fid < net.N){
+        const k = net.faceClass[fid];
+        let pc = NaN;
+        if (net.segProb) pc = net.segProb[fid*25 + k];
+        else if (net.faceConf) pc = net.faceConf[fid];
+        hf.textContent = (net.labels[k] || ('#'+k)) + (isFinite(pc) ? (' · ' + (pc*100).toFixed(0) + '%') : '');
+        hf.title = 'AAGNet 语义任务对 F' + fid + ' 的原始输出（25 类之一）';
+      } else {
+        hf.textContent = '—';
+      }
+    }
   }
-  function hudClear(){ ['hFace','hType','hArea','hFeat'].forEach(k=>$(k).textContent='—'); }
+  function hudClear(){
+    ['hFace','hType','hArea','hFeat'].forEach(k=>$(k).textContent='—');
+    const hf = $('hFine'); if (hf){ hf.textContent = '—'; hf.title = ''; }
+  }
 
   function selectInstance(i, scroll){
     S.selInstance = i;
-    paintAll();
-    document.querySelectorAll('.feat').forEach((el,k)=> el.classList.toggle('sel', k===i));
+    if (i >= 0) S.selFaces.clear();
+    refresh();
+    document.querySelectorAll('.feat').forEach(el=> el.classList.toggle('sel', Number(el.dataset.i) === i));
     if (scroll && i>=0){
       const el=document.querySelector(`.feat[data-i="${i}"]`);
       if (el) el.scrollIntoView({block:'nearest', behavior:'smooth'});
@@ -1516,10 +1901,32 @@ window.addEventListener('error', function(e){
     } else if (i<0) hudClear();
     drawGraph();
   }
-  function focusFace(fid){
-    const it = S.part.instances.findIndex(x=>x.faces.includes(fid));
-    if (it>=0) selectInstance(it, true); else { selectInstance(-1); hudFace(fid); }
+
+  /* 面级选择：单击单选，Shift/Ctrl 加选，再点同一条会取消它 */
+  function selectFaces(faces, additive){
+    if (!additive){ S.selFaces = new Set(); S.selInstance = -1; }
+    faces.forEach(f=>{
+      if (additive && S.selFaces.has(f)) S.selFaces.delete(f);
+      else S.selFaces.add(f);
+    });
+    refresh();
+    document.querySelectorAll('.feat').forEach(el=> el.classList.remove('sel'));
+    if (S.selFaces.size === 1) hudFace([...S.selFaces][0]);
+    else if (!S.selFaces.size) hudClear();
+    else { $('hFace').textContent = S.selFaces.size + ' 个面'; $('hType').textContent = '多选'; $('hFeat').textContent = '—'; }
+    drawGraph();
   }
+
+  function clearSelection(){
+    S.selInstance = -1;
+    S.selFaces.clear();
+    document.querySelectorAll('.feat').forEach(el=> el.classList.remove('sel'));
+    hudClear();
+    refresh();
+    drawGraph();
+  }
+
+  function focusFace(fid){ selectFaces(new Set([fid]), false); }
 
   function paintAll(){ setColors(); draw(0); }
 
@@ -1624,21 +2031,44 @@ window.addEventListener('error', function(e){
     clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('on'), 2200);
   }
 
+  function syncOpts(){
+    $('viewOpts').querySelectorAll('button').forEach(b=>{
+      const k = b.dataset.opt;
+      b.classList.toggle('on', k === 'edges' ? S.showEdges : S.fadeMode === k);
+    });
+  }
+
   function bindUI(){
     $('btnRun').onclick = runPipeline;
     $('btnExport').onclick = downloadJson;
     $('btnCopy').onclick = ()=>{ navigator.clipboard.writeText($('json').textContent).then(()=>toast('已复制 JSON')); };
     $('btnDl').onclick = downloadJson;
+
     $('modes').querySelectorAll('button').forEach(b=>{
       b.onclick = ()=>{
         $('modes').querySelectorAll('button').forEach(x=>x.classList.remove('on'));
         b.classList.add('on');
         S.mode = b.dataset.mode;
-        selectInstance(-1);
-        paintAll();
+        /* 面片模式下每个面一个色，不开边线就分不清面在哪儿 —— 自动打开 */
+        if (S.mode === 'face' && !S.showEdges){ S.showEdges = true; syncOpts(); }
+        refresh();                       // 保留当前选中，只换配色口径
         if (S.mode==='bottom') toast('底面识别：'+S.bottomFaces.size+' 个特征底面');
       };
     });
+
+    $('viewOpts').querySelectorAll('button').forEach(b=>{
+      b.onclick = ()=>{
+        const k = b.dataset.opt;
+        if (k === 'edges') S.showEdges = !S.showEdges;
+        else {
+          S.fadeMode = k;
+          toast(k === 'hide' ? '非选中的面：完全隐藏' : '非选中的面：淡出为半透明');
+        }
+        syncOpts();
+        refresh();
+      };
+    });
+
     $('vIso').onclick = ()=>{ setView(0.70, 0.46, true); };
     $('vTop').onclick = ()=>{ setView(0.0, 1.34, true); };
     $('vFront').onclick = ()=>{ setView(0.0, 0.03, true); };
@@ -1651,6 +2081,36 @@ window.addEventListener('error', function(e){
         $('pane-'+b.dataset.pane).classList.add('on');
       };
     });
+
+    const q = $('featQ');
+    if (q) q.oninput = ()=>{ S.q = q.value; renderFeatList(); };
+
+    /* 快捷键：Esc 清筛选、数字键切显示模式、I 切淡出/隐藏、F 聚焦选中特征 */
+    window.addEventListener('keydown', e=>{
+      const tag = (e.target && e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea'){
+        if (e.key === 'Escape'){ e.target.value = ''; e.target.blur(); S.q=''; renderFeatList(); }
+        return;
+      }
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key === 'Escape'){ clearAllFilters(); return; }
+      if (e.key === 'i' || e.key === 'I'){
+        S.fadeMode = (S.fadeMode === 'hide') ? 'ghost' : 'hide';
+        syncOpts(); refresh();
+        toast(S.fadeMode === 'hide' ? '非选中的面：完全隐藏' : '非选中的面：淡出为半透明');
+        return;
+      }
+      if (e.key === 'f' || e.key === 'F'){
+        if (S.selInstance >= 0) zoomToInstance(S.selInstance); else fitCamera();
+        return;
+      }
+      const m = {'1':'semantic','2':'instance','3':'bottom','4':'face'}[e.key];
+      if (m){
+        const btn = $('modes').querySelector(`button[data-mode="${m}"]`);
+        if (btn) btn.click();
+      }
+    });
+
     bindImport();
   }
 
