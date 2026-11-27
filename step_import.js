@@ -1544,23 +1544,25 @@
       if (kk === 'Plane' || kk === 'Cylinder' || kk === 'Cone' || kk === 'Sphere' || kk === 'Torus') analytic++;
     }
     var analyticShare = faces.length ? analytic / faces.length : 0;
-    var skipNet = '';
+    /* 域外只做标注，不再拦截：AAGNet 一律照跑，结果标成「参考」。
+     * 之前的做法是直接跳过，界面上就只剩几何、什么特征都没有 —— 用户要的是结果，
+     * 不是替用户决定「这个件不值得算」。 */
+    var netCaveat = '';
     if (!shape.solids && !shape.closedShells) {
-      skipNet = '该文件是曲面片体（' + shape.surfaceModels + ' 个 SHELL_BASED_SURFACE_MODEL、0 个封闭实体），'
-              + '没有实体内部，孔/腔/台阶不成立';
+      netCaveat = '曲面片体（' + shape.surfaceModels + ' 个 SHELL_BASED_SURFACE_MODEL、0 个封闭实体）：'
+                + '孔/型腔/台阶的语义依赖实体内部，网络输出的语义与实例仅供参考';
     } else if (analyticShare < 0.2) {
-      skipNet = '平面/圆柱/圆锥/球/环面只占 ' + Math.round(analyticShare * 100) + '%，其余是自由曲面，'
-              + '超出 AAGNet 的训练域';
+      netCaveat = '解析面只占 ' + Math.round(analyticShare * 100) + '%、其余为自由曲面，'
+                + '属于 AAGNet 训练域外，结果仅供参考';
     }
-    if (skipNet) {
-      nn = { skipped: true, reason: skipNet, N: faces.length };
-    } else if (GB && GB.AAG_MODEL && GB.AAG_MODEL.ready() && GB.AAG_REC && GB.AAG_REC.recognize) {
+    if (GB && GB.AAG_MODEL && GB.AAG_MODEL.ready() && GB.AAG_REC && GB.AAG_REC.recognize) {
       try {
         nn = GB.AAG_REC.recognize(faces, {
           center: center,
           maxExt: Math.max(bmax[0] - bmin[0], bmax[1] - bmin[1], bmax[2] - bmin[2]) || 1,
           unit: unit
         });
+        if (nn && netCaveat) nn.caveat = netCaveat;
       } catch (e) {
         nn = { error: (e && e.message) ? e.message : String(e) };
       }
@@ -1654,7 +1656,11 @@
       edges: pairs,
       size_mm: [(bmax[0] - bmin[0]) * unit, (bmax[1] - bmin[1]) * unit, (bmax[2] - bmin[2]) * unit].map(function (x) { return Math.round(x * 10) / 10; }),
       bbox: [bmin.map(r3), bmax.map(r3)],
-      positions_b64: b64FromBytes(new Uint8Array(positions.buffer)),
+      /* 直接挂 Float32Array，不再绕 base64。
+       * 4518 面 / 152 万三角时，base64 要走「4 字符/字节 push 进数组再 join」，
+       * 光那一个数组就是 7300 万个元素：几十秒时间 + 600 MB 堆，纯属白烧。
+       * 渲染端 decodePart 会复制一份再做 Z-up→Y-up，不会二次变换。 */
+      _pos: positions,
       faceids: Array.prototype.slice.call(faceids),
       imported: true,
       nn: nn,
@@ -1670,7 +1676,7 @@
         shape: shape,
         analyticShare: Math.round(analyticShare * 1000) / 1000,
         tris: faces.reduce(function (a, f) { return a + f.tris; }, 0),
-        netSkipped: skipNet || '',
+        netCaveat: netCaveat,
         ms: Math.round(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0))
       }
     };

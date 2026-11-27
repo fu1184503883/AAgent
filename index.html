@@ -576,22 +576,16 @@ window.addEventListener('error', function(e){
     const net = p._net;
     $('mdlTag').textContent = imported ? '本地 STEP · B-Rep' : 'STEP / B-Rep';
     const badge = $('badge'), tx = $('badgeTx');
-    const skip = p._skipNet || '';
-    if (imported && skip){
-      tx.textContent = '本地文件 · 曲面片体（未做特征识别）';
-      badge.title = '本地导入：几何与拓扑在浏览器内解析完成（' + p.faces.length + ' 面）。'
-        + '但没有跑 AAGNet —— ' + skip + '。左边只显示几何与面属性，不给特征实例。';
-      badge.style.color = '#cfe2ff';
-      badge.style.borderColor = '#3b6ea5';
-      badge.style.background = '#0b1a2a';
-    } else if (imported && net){
-      tx.textContent = '本地文件 · AAGNet 推理';
+    const caveat = (net && net.caveat) ? net.caveat : '';
+    if (imported && net){
+      tx.textContent = caveat ? '本地文件 · AAGNet 推理（域外参考）' : '本地文件 · AAGNet 推理';
       badge.title = '本地导入：STEP 在浏览器内解析出真实 B-Rep，gAAG 属性按 AAGExtractor 口径构造，'
         + '再由 0.436M 参数的 AAGNet 权重在本页做前向（三任务：面语义 / 实例 / 底面）。'
-        + '面数 ' + net.N + ' · 有向边 ' + net.E + ' · 构图 ' + net.msGraph + ' ms · 前向 ' + net.msFwd + ' ms';
-      badge.style.color = '#bff0d0';
-      badge.style.borderColor = '#2f8f63';
-      badge.style.background = '#0b2418';
+        + '面数 ' + net.N + ' · 有向边 ' + net.E + ' · 构图 ' + net.msGraph + ' ms · 前向 ' + net.msFwd + ' ms'
+        + (caveat ? '。注意：' + caveat : '');
+      badge.style.color = caveat ? '#ffe6b8' : '#bff0d0';
+      badge.style.borderColor = caveat ? '#8f7a2f' : '#2f8f63';
+      badge.style.background = caveat ? '#241f0b' : '#0b2418';
     } else if (imported){
       tx.textContent = '本地文件 · 规则兜底';
       badge.title = '本地导入：几何与拓扑来自你选择的 STEP 文件，在浏览器内解析；'
@@ -606,9 +600,8 @@ window.addEventListener('error', function(e){
       badge.style.color = ''; badge.style.borderColor = ''; badge.style.background = '';
     }
     $('fInfo').textContent = imported
-      ? (skip ? '自由曲面片体 · 仅解析几何'
-              : (net ? 'AAGNet 浏览器内推理 · 面语义/实例/底面'
-                     : '本地 STEP · 浏览器内解析 · 规则启发式（非网络）'))
+      ? (net ? 'AAGNet 浏览器内推理 · 面语义/实例/底面'
+             : '本地 STEP · 浏览器内解析 · 规则启发式（非网络）')
       : 'AAGNet · RCIM 2024 · 权重 0.41M';
     renderImpNote(p);
   }
@@ -624,20 +617,13 @@ window.addEventListener('error', function(e){
 
     let head = `浏览器内解析：${d.faces || p.faces.length} 面 · ${p.triangles} 三角面 · 单位 ${d.unit_mm || 1} mm · ${d.ms || 0} ms`;
     let body;
-    const skip = p._skipNet || '';
-    if (skip){
-      const sh = d.shape || {};
-      body = `这块件是<b>曲面片体</b>：${sh.surfaceModels || 0} 个 SHELL_BASED_SURFACE_MODEL、`
-        + `${sh.solids || 0} 个实体壳，平面/圆柱类解析面占比 ${Math.round((d.analyticShare || 0) * 100)}%。`
-        + `<br>孔、型腔、台阶这些特征的定义都依赖「实体内部」，片体上没有这个概念，`
-        + `AAGNet 训练集也全是机加工实体件 —— 所以这里<b>不跑网络</b>，避免把 44 个假实例当成结果。`
-        + `<br><span style="opacity:.75">几何、面属性、相邻边都已经算好，点面可以看面积/类型/质心。</span>`;
-    } else if (net){
+    if (net){
       const inst = net.instances.length;
       body = `gAAG：${net.N} 面 / ${net.pairs} 对相邻边（有向 ${net.E}）· 构图 ${net.msGraph} ms · 前向 ${net.msFwd} ms`
         + `<br>网络给出 <b>${inst}</b> 个特征实例、<b>${net.bottomMask.reduce((a,b)=>a+b,0)}</b> 个特征底面`
         + (inst ? '；上方列表即网络输出，可点面反查。' : '；该件网络未给出成组实例（多为毛坯面）。');
       if (p._ruleCount && !inst) body += `<br><span style="opacity:.75">规则启发式另有 ${p._ruleCount} 个候选，仅作参考。</span>`;
+      if (net.caveat) body += `<br><span style="color:#ffd58a">域外提示：${net.caveat}。</span>`;
     } else {
       body = (p.instances.length
         ? `特征实例 ${p.instances.length} 个由规则生成，可点面反查。`
@@ -649,10 +635,15 @@ window.addEventListener('error', function(e){
   }
 
   function decodePart(p){
-    const raw = atob(p.positions_b64);
-    const buf = new Uint8Array(raw.length);
-    for (let i=0;i<raw.length;i++) buf[i] = raw.charCodeAt(i);
-    const pos = new Float32Array(buf.buffer);
+    let pos;
+    if (p._pos){
+      pos = new Float32Array(p._pos);           // 本地导入件：直接复制，跳过 base64 往返
+    } else {
+      const raw = atob(p.positions_b64);
+      const buf = new Uint8Array(raw.length);
+      for (let i=0;i<raw.length;i++) buf[i] = raw.charCodeAt(i);
+      pos = new Float32Array(buf.buffer);
+    }
     const tri = pos.length/9;
     // CAD Z-up -> GL Y-up: (x,y,z) -> (x, z, -y)
     for (let v=0; v<pos.length; v+=3){
@@ -676,23 +667,37 @@ window.addEventListener('error', function(e){
     const faceById = new Map(p.faces.map(f=>[f.id,f]));
     const instOfFace = new Map();
     p.instances.forEach((it,ii)=> it.faces.forEach(fidv=> instOfFace.set(fidv, ii)));
-    // boundary edge segments (per face + feature edges)
-    const map = new Map();
+    /* 边界线：按面分段统计，只留「面内只出现一次」的三角边。
+     * 老写法是全局一张 Map + 字符串 key：152 万三角 = 456 万条记录，
+     * 每条还挂数组和 Set，堆直接被顶到 1 GB 以上。面内三角只有几百个，
+     * 分段后局部 Map 用完即弃，全局只留下一张线段数组。 */
+    const Q = 1e4, OFF = 20000;
+    const qk = (x, y, z) => (((Math.round(x * Q) + OFF) * 40001 + (Math.round(y * Q) + OFF)) * 40001 + (Math.round(z * Q) + OFF));
+    const lines = [];
+    let curF = -1, local = null;
+    const flushFace = () => {
+      if (!local) return;
+      local.forEach(r => { if (r.n === 1) lines.push(r.ax, r.ay, r.az, r.bx, r.by, r.bz); });
+      local = null;
+    };
     for (let t=0;t<tri;t++){
       const o=t*9, f=fid[t];
-      const vs=[[pos[o],pos[o+1],pos[o+2]],[pos[o+3],pos[o+4],pos[o+5]],[pos[o+6],pos[o+7],pos[o+8]]];
-      for (let e=0;e<3;e++){
-        const a=vs[e], b=vs[(e+1)%3];
-        const k=[a,b].map(v=>v.map(x=>Math.round(x*1e5)).join(',')).sort().join('|');
-        let rec=map.get(k);
-        if (!rec){ rec={a:a,b:b,fs:new Set([f]), n:1}; map.set(k,rec); }
-        else { rec.fs.add(f); rec.n++; }
-      }
+      if (f !== curF){ flushFace(); local = new Map(); curF = f; }
+      const px=pos[o],   py=pos[o+1], pz=pos[o+2];
+      const qx=pos[o+3], qy=pos[o+4], qz=pos[o+5];
+      const rx=pos[o+6], ry=pos[o+7], rz=pos[o+8];
+      const k0=qk(px,py,pz), k1=qk(qx,qy,qz), k2=qk(rx,ry,rz);
+      const push=(ka,kb,ax,ay,az,bx,by,bz)=>{
+        const k = ka < kb ? (ka + '|' + kb) : (kb + '|' + ka);
+        const r = local.get(k);
+        if (r) r.n++; else local.set(k, {n:1, ax,ay,az, bx,by,bz});
+      };
+      push(k0,k1, px,py,pz, qx,qy,qz);
+      push(k1,k2, qx,qy,qz, rx,ry,rz);
+      push(k2,k0, rx,ry,rz, px,py,pz);
     }
-    const lines=[];
-    map.forEach(rec=>{ if(rec.n===1 || rec.fs.size>1) lines.push(rec.a, rec.b); });
-    const edges = new Float32Array(lines.length*3);
-    for (let i=0;i<lines.length;i++){ edges[i*3]=lines[i][0]; edges[i*3+1]=lines[i][1]; edges[i*3+2]=lines[i][2]; }
+    flushFace();
+    const edges = new Float32Array(lines.length);
     return {pos, nrm, fid, tri, faceById, instOfFace, edges};
   }
 
@@ -815,10 +820,24 @@ window.addEventListener('error', function(e){
     const sel = new Float32Array(D.tri*3);
     gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.sel); gl.bufferData(gl.ARRAY_BUFFER, sel, gl.DYNAMIC_DRAW);
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
-    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.line); gl.bufferData(gl.ARRAY_BUFFER, D.edges, gl.STATIC_DRAW);
-    /* 邻接边画出来是为了「看清拓扑」。曲面片体（复材蒙皮那种）上每一片都很小，
-     * 4500 个面画出来就是一张密不透风的网格，反而看不出形面 —— 超过阈值就不画。 */
-    GL.rand.lineCount = (D.edges.length / 3 > 120000) ? 0 : D.edges.length / 3;
+    /* 线框是为了「看清拓扑」。片体上每片面很小，4500 个面全画出来是一张密不透风的网，
+     * 反而看不出形面 —— 超过 24 万顶点就等间隔抽样保留骨架，而不是整片不画。 */
+    let E = D.edges;
+    const vtxAll = E.length / 3;
+    const LIMIT = 240000;
+    if (vtxAll > LIMIT){
+      const segN = Math.floor(vtxAll / 2), keep = Math.floor(LIMIT / 2);
+      const stepS = segN / keep;
+      const out = new Float32Array(keep * 6);
+      for (let i=0;i<keep;i++){
+        const s = Math.min(segN-1, Math.floor(i * stepS)) * 6;
+        out[i*6]   = E[s];   out[i*6+1] = E[s+1]; out[i*6+2] = E[s+2];
+        out[i*6+3] = E[s+3]; out[i*6+4] = E[s+4]; out[i*6+5] = E[s+5];
+      }
+      E = out;
+    }
+    gl.bindBuffer(gl.ARRAY_BUFFER, GL.buf.line); gl.bufferData(gl.ARRAY_BUFFER, E, gl.STATIC_DRAW);
+    GL.rand.lineCount = E.length / 3;
   }
 
   function floatIds(fid){
@@ -1276,9 +1295,16 @@ window.addEventListener('error', function(e){
     $('mFace').textContent = p.faces.length;
     $('mEdge').textContent = p.edges.length;
     $('tabN').textContent = p.instances.length;
+    // diag.ms 是 buildPart 的整段耗时（已含构图与前向），别再叠加一次
+    const totMs = (p.diag && p.diag.ms) || 0;
     $('mInfer').textContent = p.imported
-      ? ((p.diag && p.diag.ms) || 0) + ' ms'
+      ? totMs + ' ms'
       : (18 + p.faces.length*0.9).toFixed(0)+' ms';
+    $('mInfer').title = p.imported
+      ? (p._net ? ('总计 ' + totMs + ' ms = 解析三角化 ' + (totMs - p._net.msGraph - p._net.msFwd)
+                  + ' + 构图 ' + p._net.msGraph + ' + 前向 ' + p._net.msFwd)
+                : ('仅几何解析 ' + totMs + ' ms，网络未参与'))
+      : '演示样例的离线推理耗时';
 
     // sum cards
     const clsCount = {};
@@ -1511,15 +1537,16 @@ window.addEventListener('error', function(e){
     const steps = imp
       ? [['STEP 解析','浏览器内读实体表，文件不上传'], STEPS[1], STEPS[2], STEPS[3], STEPS[4]]
       : STEPS;
+    const net = p && p._net;
     const times = imp
-      ? [((p.diag&&p.diag.ms)||0)+' ms','—','—','—','—']
+      ? [((p.diag&&p.diag.ms)||0)+' ms',
+         net ? net.msGraph+' ms' : '—',
+         net ? net.msFwd+' ms' : '—',
+         '—','—']
       : ['6 ms','9 ms','21 ms','5 ms','—'];
-    const skipped = !!(p && p._skipNet);
     $('steps').innerHTML = steps.map(([t,d],i)=>{
       let st = state[i]||'';
       let desc = d, ms = times[i];
-      // 片体：几何算完就停，gAAG / 前向 / 后处理确实没跑，别装作跑过
-      if (skipped && i >= 1 && i <= 3){ st = 'skip'; desc = '未执行：曲面片体没有实体特征可识别'; ms = ''; }
       return `<div class="step ${st}"><div class="ic">${st==='done'?'✓':(st==='skip'?'–':i+1)}</div>
         <div class="tx"><b>${t}</b><span>${desc}</span></div><div class="ms">${st==='done'?ms:''}</div></div>`;
     }).join('');
@@ -1582,9 +1609,9 @@ window.addEventListener('error', function(e){
     $('flowState').textContent='完成';
     if (S.part.imported){
       const ms=(S.part.diag&&S.part.diag.ms)||0;
-      toast(S.part._skipNet
-        ? ('几何解析完成：' + S.part.faces.length + ' 面 · ' + ms + ' ms（曲面片体，未做特征识别）')
-        : ('识别完成：'+S.part.instances.length+' 个特征实例 · 本地规则 '+ms+' ms'));
+      toast(S.part._net
+        ? ('识别完成：'+S.part.instances.length+' 个特征实例 · 网络 '+S.part._net.msFwd+' ms')
+        : ('几何解析完成：' + S.part.faces.length + ' 面 · ' + ms + ' ms（规则兜底，非网络输出）'));
     } else {
       toast('识别完成：'+S.part.instances.length+' 个特征实例，'+(18+S.part.faces.length*0.9).toFixed(0)+' ms');
     }
@@ -1682,11 +1709,17 @@ window.addEventListener('error', function(e){
       let guess = 0, at = 0;
       while ((at = text.indexOf('ADVANCED_FACE', at)) >= 0) { guess++; at += 13; }
       const big = guess > 1500 || text.length > 12 * 1024 * 1024;
+      // 时间常数来自实测（4518 面 / 152 万三角）：解析三角化 7.6 ms/面，构图+前向 2.2 ms/面
+      const estParse = Math.max(1, Math.round(guess * 8 / 1000));
+      const estNet = Math.max(1, Math.round(guess * 2.4 / 1000));
+      const mb = (text.length / 1048576).toFixed(1);
       showImp('导入本地 STEP',
         (big
-          ? `共约 <b>${guess}</b> 个面 · ${(text.length / 1048576).toFixed(1)} MB，`
-            + `解析 + 三角化预计 <b>${guess > 3000 ? '20~60' : '5~20'} 秒</b>；`
-            + `这段时间页面没有响应是正常的（单线程解析）<br>`
+          ? `共约 <b>${guess}</b> 个面 · ${mb} MB —— 这是个大件。<br>`
+            + `预计：解析三角化 <b>约 ${estParse} 秒</b> + AAGNet 前向 <b>约 ${estNet} 秒</b>，`
+            + `合计 <b>${estParse + estNet} 秒</b> 上下。<br>`
+            + `<span style="color:#ffd58a">这段时间页面会完全没响应（单线程算），属正常现象：`
+            + `请勿关闭标签页、勿重复点击导入，跑完自动出结果。</span><br>`
           : '')
         + '解析实体表 · 三角化 B-Rep 面 · 组 gAAG · 网络前向 …<br>' +
         '<span style="opacity:.7">全部在本机浏览器内完成，文件不会上传</span>');
@@ -1701,9 +1734,7 @@ window.addEventListener('error', function(e){
     // 规则识别给出的实例先记下来当兜底，再用网络结果覆盖
     part._ruleCount = part.instances.length;
     const nn = part.nn;
-    if (nn && nn.skipped){
-      part._skipNet = nn.reason || '该件不在 AAGNet 适用范围内';
-    } else if (nn && !nn.error){
+    if (nn && !nn.error){
       part._net = nn;
       // 网络跑通就以网络为准（可能是 0 个实例）；规则候选只记个数，列表里不混两套口径
       part.instances = (nn.instances || []).map((it, i)=> Object.assign({}, it, { id: i }));
@@ -1720,12 +1751,15 @@ window.addEventListener('error', function(e){
     const idx = PARTS.length - 1;
     renderChips(idx);
     loadPart(idx);
+    /* 只保留当前件的渲染缓存。一个大件的 _decoded（pos+nrm+线框）就是 100 MB 量级，
+     * 旧件留着只会把堆顶到 OOM；切回去时 loadPart 会按需重建。 */
+    PARTS.forEach((q, qi) => { if (qi !== idx && q._decoded) q._decoded = null; });
     setTimeout(()=>{ if(!S.run) runPipeline(); }, 320);
     const d = part.diag || {};
-    const tail = part._skipNet ? ' · 曲面片体，未做特征识别'
-      : (part._net
-        ? (' · 网络 ' + part.instances.length + ' 实例 / ' + part._net.msFwd + ' ms')
-        : ' · 规则兜底');
+    const tail = part._net
+      ? ((part._net.caveat ? ' · 网络（域外参考）' : ' · 网络')
+         + ' ' + part.instances.length + ' 实例 / ' + part._net.msFwd + ' ms')
+      : ' · 规则兜底（网络未参与）';
     toast('已导入 ' + part.faces.length + ' 面' + tail + (d.ms ? (' · 解析 ' + d.ms + ' ms') : ''));
   }
 
