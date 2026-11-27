@@ -36,7 +36,7 @@ async function connect(url) {
   const files = process.argv.slice(2);
   if (!files.length) { console.log('用法: node tools/import_one.js <file.step> [...]'); process.exit(1); }
   const list = await (await fetch('http://127.0.0.1:9222/json/list')).json();
-  const t = list.find(x => x.type === 'page' && x.url.includes('aagnet-demo'));
+  const t = list.find(x => x.type === 'page' && x.url.includes('index.html'));
   if (!t) { console.log('no page target（先启动带 --remote-debugging-port=9222 的 Chrome 并打开 index.html）'); process.exit(1); }
   const c = await connect(t.webSocketDebuggerUrl);
   await c.call('Page.enable'); await c.call('Runtime.enable'); await c.call('DOM.enable');

@@ -415,7 +415,7 @@ pre.json{
         </div>
       </div>
 
-      <div class="hint" id="hint">左键旋转 · 滚轮缩放 · 右键平移 · 点击面查看特征</div>
+      <div class="hint" id="hint">左键拖动旋转 · 中键/右键拖动平移 · 滚轮朝光标缩放 · Shift+左键绕光标转 · 双击复位</div>
 
       <div class="legend" id="legend"></div>
       <div class="hud" id="hud">
@@ -768,7 +768,8 @@ window.addEventListener('error', function(e){
     GL.buf = {pos:gl.createBuffer(), nrm:gl.createBuffer(), col:gl.createBuffer(), sel:gl.createBuffer(),
               fid:gl.createBuffer(), line:gl.createBuffer(), selLine:gl.createBuffer()};
     GL.rand = {lineCount:0, selCount:0};
-    GL.cam = {az:0.72, el:0.52, dist:2.35, target:[0,0,0], fov:0.52};
+    GL.cam = {q:qFromAzEl(0.72, 0.52), dist:2.35, target:[0,0,0], fov:0.52};
+    GL.viewAnim = null;
     bindEvents();
   }
 
@@ -933,11 +934,54 @@ window.addEventListener('error', function(e){
   function dot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
   function norm(a){const l=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/l,a[1]/l,a[2]/l];}
 
+  /* ---------------------------------------------------- 四元数相机（3DE 操作）
+   * 旧实现用 az/el 球坐标：俯仰被夹在 ±1.35 rad（±77°），看不到底面，转到极点
+   * 还会翻面、卡住。这里改成累积四元数 q（相机→世界），没有极点也没有夹取，
+   * 想转到哪个角度都行；平移用屏幕基向量算，俯视/仰视都不会错向。 */
+  function qMul(a,b){
+    return [
+      a[3]*b[0]+a[0]*b[3]+a[1]*b[2]-a[2]*b[1],
+      a[3]*b[1]-a[0]*b[2]+a[1]*b[3]+a[2]*b[0],
+      a[3]*b[2]+a[0]*b[1]-a[1]*b[0]+a[2]*b[3],
+      a[3]*b[3]-a[0]*b[0]-a[1]*b[1]-a[2]*b[2]];
+  }
+  function qAxis(ax,ay,az,ang){
+    const h=ang*0.5, s=Math.sin(h), l=Math.hypot(ax,ay,az)||1;
+    return [ax/l*s, ay/l*s, az/l*s, Math.cos(h)];
+  }
+  function qNorm(q){
+    const l=Math.hypot(q[0],q[1],q[2],q[3])||1;
+    return [q[0]/l, q[1]/l, q[2]/l, q[3]/l];
+  }
+  function qInv(q){ return [-q[0],-q[1],-q[2],q[3]]; }      // 单位四元数的逆＝共轭
+  function qRotV(q,v){
+    const x=q[0], y=q[1], z=q[2], w=q[3];
+    const tx=2*(y*v[2]-z*v[1]), ty=2*(z*v[0]-x*v[2]), tz=2*(x*v[1]-y*v[0]);
+    return [v[0]+w*tx+(y*tz-z*ty), v[1]+w*ty+(z*tx-x*tz), v[2]+w*tz+(x*ty-y*tx)];
+  }
+  /* 球坐标 → 四元数，与旧 eye=[cos el sin az, sin el, cos el cos az] 完全等价 */
+  function qFromAzEl(az,el){ return qMul(qAxis(0,1,0,az), qAxis(1,0,0,-el)); }
+  function qSlerp(a,b,t){
+    let d=a[0]*b[0]+a[1]*b[1]+a[2]*b[2]+a[3]*b[3], bb=b;
+    if (d<0){ d=-d; bb=[-b[0],-b[1],-b[2],-b[3]]; }
+    if (d>0.9995) return qNorm([a[0]+(bb[0]-a[0])*t, a[1]+(bb[1]-a[1])*t,
+                                a[2]+(bb[2]-a[2])*t, a[3]+(bb[3]-a[3])*t]);
+    const th=Math.acos(Math.min(1,d)), s=Math.sin(th);
+    const w1=Math.sin((1-t)*th)/s, w2=Math.sin(t*th)/s;
+    return [a[0]*w1+bb[0]*w2, a[1]*w1+bb[1]*w2, a[2]*w1+bb[2]*w2, a[3]*w1+bb[3]*w2];
+  }
+  function camBasis(){
+    const q=GL.cam.q;
+    return {right:qRotV(q,[1,0,0]), up:qRotV(q,[0,1,0]), back:qRotV(q,[0,0,1])};
+  }
+  function camEye(){
+    const c=GL.cam, b=camBasis();
+    return [c.target[0]+b.back[0]*c.dist, c.target[1]+b.back[1]*c.dist, c.target[2]+b.back[2]*c.dist];
+  }
+
   function mvp(){
-    const cv=$('gl'), c=GL.cam;
-    const az=c.az, el=c.el;
-    const eye=[Math.cos(el)*Math.sin(az)*c.dist, Math.sin(el)*c.dist, Math.cos(el)*Math.cos(az)*c.dist];
-    const view=lookAt(add(eye,c.target), c.target, [0,1,0]);
+    const cv=$('gl'), c=GL.cam, b=camBasis();
+    const view=lookAt(camEye(), c.target, b.up);
     const proj=persp(c.fov, cv.width/cv.height, c.dist*0.05, c.dist*8);
     // arrays are column-major: mul(b,a) yields column-major (a*b)
     return mul(view, proj);
@@ -1026,42 +1070,144 @@ window.addEventListener('error', function(e){
   }
 
   /* ---------------------------------------------------------------- camera */
+  /* 操作方式对齐 3DEXPERIENCE：
+   *   左键拖动      = 旋转（Shift 时绕光标所指的点转）
+   *   中键 / 右键拖 = 平移
+   *   滚轮          = 朝光标缩放（不是朝屏幕中心）
+   *   双击          = 复位视图
+   * 松手后有短暂惯性，和 3DE 一样"甩一下能继续转"。 */
   let drag=null;
+  const INERT = {rv:[0,0], pv:[0,0]};     // 角速度 rad/s、平移速度 px/s
+
+  /* 光标射线与「过 target、垂直视线」平面的交点：旋转锚点 / 缩放锚点都用它 */
+  function planeHit(mx,my){
+    const cv=$('gl'), c=GL.cam, b=camBasis();
+    const w=Math.max(1,cv.clientWidth), h=Math.max(1,cv.clientHeight);
+    const t2=2*Math.tan(c.fov*0.5);
+    const sx=(mx/w-0.5)*t2*(w/h), sy=(0.5-my/h)*t2;
+    const dir=norm([
+      b.right[0]*sx + b.up[0]*sy - b.back[0],
+      b.right[1]*sx + b.up[1]*sy - b.back[1],
+      b.right[2]*sx + b.up[2]*sy - b.back[2]]);
+    const eye=camEye();
+    const den=dot(dir, b.back);
+    if (Math.abs(den)<1e-6) return [c.target[0],c.target[1],c.target[2]];
+    const tt=dot(sub(c.target,eye), b.back)/den;
+    return [eye[0]+dir[0]*tt, eye[1]+dir[1]*tt, eye[2]+dir[2]*tt];
+  }
+
+  /* 在相机局部坐标系里转增量：绕屏幕竖直轴 ay、绕屏幕水平轴 ax */
+  function applyRot(ax,ay,pivot){
+    const c=GL.cam;
+    let q=qMul(c.q, qAxis(1,0,0,ax));
+    q=qMul(q, qAxis(0,1,0,ay));
+    if (pivot){                                  // 绕锚点转：target 跟着锚点转，锚点屏幕位置不动
+      const dq=qMul(qNorm(q), qInv(c.q));
+      c.target=add(pivot, qRotV(dq, sub(c.target, pivot)));
+    }
+    c.q=qNorm(q);
+  }
+  function rotateBy(dx,dy,pivot,dt){
+    const k=2*Math.PI/Math.max(420, $('gl').clientWidth);
+    const ax=-dy*k, ay=-dx*k;
+    applyRot(ax,ay,pivot);
+    if (dt>1e-4){                                // 记速度给惯性用，做一次低通
+      INERT.rv[0]=INERT.rv[0]*0.6 + (ax/dt)*0.4;
+      INERT.rv[1]=INERT.rv[1]*0.6 + (ay/dt)*0.4;
+    }
+  }
+  function panBy(dx,dy,dt){
+    const c=GL.cam, b=camBasis(), cv=$('gl');
+    const s=2*c.dist*Math.tan(c.fov*0.5)/Math.max(1,cv.clientHeight);   // 1 px 对应的世界长度
+    c.target[0] -= b.right[0]*dx*s - b.up[0]*dy*s;
+    c.target[1] -= b.right[1]*dx*s - b.up[1]*dy*s;
+    c.target[2] -= b.right[2]*dx*s - b.up[2]*dy*s;
+    if (dt>1e-4){
+      INERT.pv[0]=INERT.pv[0]*0.6 + (dx/dt)*0.4;
+      INERT.pv[1]=INERT.pv[1]*0.6 + (dy/dt)*0.4;
+    }
+  }
+
   function bindEvents(){
     const cv=$('gl');
+    cv.style.touchAction='none';
     cv.addEventListener('mousedown', e=>{
-      drag={x:e.clientX, y:e.clientY, moved:0, btn:e.button};
-      if (e.button!==0) cv.style.cursor='grabbing';
+      if (e.button===1) e.preventDefault();          // 掐掉 Chrome 的中键自动滚动
+      GL.viewAnim=null; INERT.rv=[0,0]; INERT.pv=[0,0];
+      const rect=cv.getBoundingClientRect();
+      drag={x:e.clientX, y:e.clientY, moved:0, btn:e.button, t0:performance.now(),
+            pivot: (e.button===0 && e.shiftKey) ? planeHit(e.clientX-rect.left, e.clientY-rect.top) : null};
+      cv.style.cursor = e.button===0 ? 'grabbing' : 'move';
     });
     window.addEventListener('mousemove', e=>{
       if (drag){
         const dx=e.clientX-drag.x, dy=e.clientY-drag.y;
+        const now=performance.now(), dt=Math.max(1, now-drag.t0)/1000;
         drag.moved += Math.abs(dx)+Math.abs(dy);
-        if (drag.btn===0){
-          GL.cam.az -= dx*0.008; GL.cam.el = Math.max(-1.35, Math.min(1.35, GL.cam.el + dy*0.008));
-        } else {
-          const s=GL.cam.dist*0.0016;
-          const right=[Math.cos(GL.cam.az),0,-Math.sin(GL.cam.az)];
-          const up=[0,1,0];
-          GL.cam.target[0] -= right[0]*dx*s; GL.cam.target[1] += dy*s; GL.cam.target[2] -= right[2]*dx*s;
-        }
-        drag.x=e.clientX; drag.y=e.clientY;
+        if (drag.btn===0) rotateBy(dx, dy, drag.pivot, dt);
+        else panBy(dx, dy, dt);
+        drag.x=e.clientX; drag.y=e.clientY; drag.t0=now;
       } else {
         hoverAt(e);
       }
     });
     window.addEventListener('mouseup', e=>{
-      if (drag && drag.moved<4 && drag.btn===0) clickAt(e);
+      if (drag){
+        if (drag.moved<4 && drag.btn===0 && e.detail<2) clickAt(e);   // 双击复位那两下不当作选面
+        if (performance.now()-drag.t0 > 140){ INERT.rv=[0,0]; INERT.pv=[0,0]; }  // 停住再松手就别甩
+      }
       drag=null; cv.style.cursor='grab';
     });
     cv.addEventListener('wheel', e=>{
       e.preventDefault();
-      GL.cam.dist *= (e.deltaY>0?1.12:0.89);
-      GL.cam.dist = Math.max(0.9, Math.min(6, GL.cam.dist));
+      const c=GL.cam, rect=cv.getBoundingClientRect();
+      const p=planeHit(e.clientX-rect.left, e.clientY-rect.top);   // 以光标处为缩放锚点
+      let dy=e.deltaY;
+      if (e.deltaMode===1) dy*=16; else if (e.deltaMode===2) dy*=100;   // 行/页模式归一化
+      const want=c.dist*Math.exp(dy*0.0012);
+      const nd=Math.max(0.35, Math.min(9, want)), r=nd/c.dist;
+      c.target[0]=p[0]+(c.target[0]-p[0])*r;
+      c.target[1]=p[1]+(c.target[1]-p[1])*r;
+      c.target[2]=p[2]+(c.target[2]-p[2])*r;
+      c.dist=nd;
     }, {passive:false});
+    cv.addEventListener('auxclick', e=>{ if (e.button===1) e.preventDefault(); });
     cv.addEventListener('contextmenu', e=>e.preventDefault());
     cv.addEventListener('dblclick', ()=>{ fitCamera(); });
     cv.style.cursor='grab';
+  }
+
+  /* 每帧推进：视角动画 / 松手后的惯性 */
+  let camT=0;
+  function stepCamera(){
+    const c=GL.cam, now=performance.now();
+    const dt=Math.min(0.05, (now-(camT||now))/1000);
+    camT=now;
+    if (GL.viewAnim){
+      const a=GL.viewAnim, k=Math.min(1,(now-a.t0)/a.dur);
+      const e=k<0.5 ? 2*k*k : 1-Math.pow(-2*k+2,2)/2;      // easeInOutQuad
+      c.q=qSlerp(a.from, a.to, e);
+      if (k>=1) GL.viewAnim=null;
+      return;
+    }
+    if (drag || dt<=0) return;
+    const decay=Math.exp(-9*dt);
+    // 角速度封顶，避免快速一甩转出好几圈
+    const rv=Math.hypot(INERT.rv[0], INERT.rv[1]);
+    if (rv>9){ INERT.rv[0]*=9/rv; INERT.rv[1]*=9/rv; }
+    if (Math.abs(INERT.rv[0])+Math.abs(INERT.rv[1]) > 0.04){
+      applyRot(INERT.rv[0]*dt, INERT.rv[1]*dt, null);
+      INERT.rv[0]*=decay; INERT.rv[1]*=decay;
+    } else if (INERT.rv[0]||INERT.rv[1]) INERT.rv=[0,0];
+    if (Math.abs(INERT.pv[0])+Math.abs(INERT.pv[1]) > 1){
+      const px=INERT.pv[0]*dt, py=INERT.pv[1]*dt;
+      const b=camBasis();
+      const s=2*c.dist*Math.tan(c.fov*0.5)/Math.max(1,$('gl').clientHeight);
+      c.target[0] -= (b.right[0]*px - b.up[0]*py)*s;
+      c.target[1] -= (b.right[1]*px - b.up[1]*py)*s;
+      c.target[2] -= (b.right[2]*px - b.up[2]*py)*s;
+      INERT.pv[0]*=decay; INERT.pv[1]*=decay;
+    } else if (INERT.pv[0]||INERT.pv[1]) INERT.pv=[0,0];
   }
 
   let hoverTimer=null;
@@ -1084,8 +1230,18 @@ window.addEventListener('error', function(e){
     else { selectInstance(-1); hudFace(f); }
   }
 
+  /* 视角切换：滑过去而不是硬跳，跟 3DE 的视点行为一致 */
+  function setView(az,el,animate){
+    const c=GL.cam, to=qFromAzEl(az,el);
+    INERT.rv=[0,0]; INERT.pv=[0,0];
+    if (!animate){ c.q=to; GL.viewAnim=null; return; }
+    GL.viewAnim={from:c.q.slice(), to:to, t0:performance.now(), dur:340};
+  }
   function fitCamera(){
-    GL.cam.target=[0,0,0]; GL.cam.dist=2.30; GL.cam.az=0.70; GL.cam.el=0.46;
+    const c=GL.cam;
+    c.target=[0,0,0]; c.dist=2.30;
+    INERT.rv=[0,0]; INERT.pv=[0,0];
+    setView(0.70, 0.46, true);
   }
 
   /* ================================================================== panels */
@@ -1427,9 +1583,9 @@ window.addEventListener('error', function(e){
         if (S.mode==='bottom') toast('底面识别：'+S.bottomFaces.size+' 个特征底面');
       };
     });
-    $('vIso').onclick = ()=>{ GL.cam.az=0.70; GL.cam.el=0.46; };
-    $('vTop').onclick = ()=>{ GL.cam.az=0.0; GL.cam.el=1.34; };
-    $('vFront').onclick = ()=>{ GL.cam.az=0.0; GL.cam.el=0.03; };
+    $('vIso').onclick = ()=>{ setView(0.70, 0.46, true); };
+    $('vTop').onclick = ()=>{ setView(0.0, 1.34, true); };
+    $('vFront').onclick = ()=>{ setView(0.0, 0.03, true); };
     $('vReset').onclick = fitCamera;
     $('tabs').querySelectorAll('button').forEach(b=>{
       b.onclick = ()=>{
@@ -1583,7 +1739,7 @@ window.addEventListener('error', function(e){
   }
 
   /* ================================================================== loop */
-  function loop(t){ draw(t); requestAnimationFrame(loop); }
+  function loop(t){ stepCamera(); draw(t); requestAnimationFrame(loop); }
 
   function boot(){
     initGL();

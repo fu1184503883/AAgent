@@ -36,7 +36,7 @@ function connect(url) {
 }
 
 (async () => {
-  const t = (await targets()).find(x => x.type === 'page' && x.url.includes('aagnet-demo'));
+  const t = (await targets()).find(x => x.type === 'page' && x.url.includes('index.html'));
   if (!t) { console.log('no page target'); process.exit(1); }
   const c = await connect(t.webSocketDebuggerUrl);
   await c.call('Page.enable');
