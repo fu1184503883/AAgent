@@ -17,3 +17,10 @@ desktop.ini
 .vscode/
 .idea/
 .workbuddy/
+
+# ---- 外部参考源码（occwl 只用来核对 uvgrid / edge_convexity / scale_to_unit_box 口径，不随仓库走）----
+/tools/_occwl/
+
+# ---- 中间对拍数据（tools/dump_graph.js 的产物）----
+/tools/out/*.bin
+/tools/out/*.json

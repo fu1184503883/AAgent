@@ -53,7 +53,9 @@ button{font-family:inherit}
 .brand h1 em{font-style:normal; color:var(--accent); font-weight:600}
 .brand p{margin:2px 0 0; font-size:11.5px; color:var(--txt3); letter-spacing:.3px; white-space:nowrap}
 
-.parts{display:flex; gap:6px; align-items:center; margin-left:6px}
+.parts{display:flex; gap:6px; align-items:center; margin-left:6px; flex:0 0 auto; min-width:0;
+  max-width:38vw; overflow-x:auto; overflow-y:hidden; scrollbar-width:none}
+.parts::-webkit-scrollbar{display:none}
 .parts .lab{font-size:11px; color:var(--txt3); margin-right:2px}
 .chip{
   border:1px solid var(--line2); background:#0c1524; color:var(--txt2);
@@ -64,6 +66,8 @@ button{font-family:inherit}
 .chip.on{background:linear-gradient(180deg,#123049,#0e2138); border-color:#2b7f9f; color:#d8f6ff; box-shadow:0 0 0 1px rgba(55,196,240,.25) inset}
 .chip b{font:600 11px/1 var(--mono); color:var(--txt3)}
 .chip.on b{color:var(--accent)}
+.chip.imp{border-color:#2b6f8a}
+.chip.imp b{color:#8fd6ef}
 
 .spacer{flex:1}
 .tools{display:flex; align-items:center; gap:8px}
@@ -283,6 +287,34 @@ pre.json{
   box-shadow:0 10px 30px rgba(0,0,0,.4);
 }
 .toast.on{opacity:1; transform:translate(-50%,0)}
+
+/* ---------------- 导入本地 STEP ---------------- */
+.drop{
+  position:absolute; inset:12px; z-index:7; display:none; place-items:center;
+  border:2px dashed #2b7f9f; border-radius:14px; background:rgba(8,20,32,.72);
+  color:#bfe9ff; font-size:13px; letter-spacing:.4px; pointer-events:none;
+}
+.drop.on{display:grid}
+.impMask{
+  position:fixed; inset:0; z-index:90; display:none; place-items:center;
+  background:rgba(4,8,14,.72);
+}
+.impMask.on{display:grid}
+.impMask .box{
+  width:min(470px,86vw); padding:20px 22px; border-radius:14px;
+  border:1px solid #2b7f9f; background:linear-gradient(180deg,#101e30,#0b1522);
+  box-shadow:0 24px 60px rgba(0,0,0,.55);
+}
+.impMask .box.err{border-color:#8a3636}
+.impMask h3{margin:0 0 8px; font-size:14px; font-weight:650; display:flex; align-items:center; gap:8px}
+.impMask p{margin:0; font-size:12px; color:var(--txt2); line-height:1.7}
+.impMask .spin{
+  width:15px; height:15px; border-radius:50%; flex:none;
+  border:2px solid #1d3a52; border-top-color:var(--accent);
+  animation:spin .8s linear infinite;
+}
+@keyframes spin{to{transform:rotate(360deg)}}
+.impMask .close{margin-top:14px}
 @media (max-width:1280px){
   .rail{width:238px} .rail.right{width:340px}
 }
@@ -304,9 +336,10 @@ pre.json{
 
     <div class="spacer"></div>
     <div class="tools">
-      <div class="badge" title="该页面为交互演示：几何与面拓扑来自真实 STEP 导出模型，识别结果为离线样例数据驱动，并非 GNN 实测。">
-        <i class="q">i</i> 演示样例数据
+      <div class="badge" id="badge" title="该页面为交互演示：几何与面拓扑来自真实 STEP 导出模型，识别结果为离线样例数据驱动，并非 GNN 实测。">
+        <i class="q">i</i><span id="badgeTx">演示样例数据</span>
       </div>
+      <button class="btn" id="btnImport" title="选择本地 .stp / .step 文件：在浏览器内解析 B-Rep 并跑一遍识别，文件不会上传">导入本地 STP</button>
       <button class="btn" id="btnExport">导出识别结果</button>
       <button class="btn primary" id="btnRun"><i class="dot"></i> 重新识别</button>
     </div>
@@ -327,6 +360,7 @@ pre.json{
             <dt>B-Rep 面</dt><dd id="mFace" class="hi">—</dd>
             <dt>gAAG 边</dt><dd id="mEdge">—</dd>
           </dl>
+          <div class="procnote" id="impNote" style="display:none;margin-top:8px"></div>
         </div>
       </div>
 
@@ -364,6 +398,7 @@ pre.json{
       <canvas id="gl"></canvas>
       <div class="vgrid"></div>
       <div class="scan" id="scan"></div>
+      <div class="drop" id="drop">松开导入 .stp / .step</div>
 
       <div class="vtop">
         <div class="seg" id="modes">
@@ -436,6 +471,15 @@ pre.json{
 </div>
 <div class="toast" id="toast"></div>
 
+<div class="impMask" id="imp">
+  <div class="box" id="impBox">
+    <h3><i class="spin" id="impSpin"></i><span id="impTitle">导入本地 STEP</span></h3>
+    <p id="impMsg"></p>
+    <button class="btn close" id="impClose" style="display:none">关闭</button>
+  </div>
+</div>
+<input type="file" id="fileStep" accept=".stp,.step,.STEP,.STP,model/step" style="display:none" />
+
 <script>
 window.addEventListener('error', function(e){
   var d=document.getElementById('dbg') || (function(){var x=document.createElement('div');x.id='dbg';
@@ -445,6 +489,7 @@ window.addEventListener('error', function(e){
 });
 </script>
 <script src="data.js"></script>
+<script src="step_import.js"></script>
 <script>
 "use strict";
 (function(){
@@ -455,6 +500,8 @@ window.addEventListener('error', function(e){
     '型腔': {c:'--cls-pocket',hex:'#fbbf24', rgb:[0.98,0.75,0.25]},
     '槽':   {c:'--cls-slot',  hex:'#34d399', rgb:[0.20,0.84,0.60]},
     '台阶': {c:'--cls-step',  hex:'#60a5fa', rgb:[0.38,0.65,0.96]},
+    '倒角': {c:'--cls-step',  hex:'#f472b6', rgb:[0.96,0.45,0.71]},
+    '圆角': {c:'--cls-step',  hex:'#2dd4bf', rgb:[0.18,0.83,0.75]},
     '毛坯': {c:'--cls-stock', hex:'#5b6b80', rgb:[0.36,0.42,0.50]}
   };
   const STOCK = CLASS['毛坯'];
@@ -469,20 +516,30 @@ window.addEventListener('error', function(e){
   const fmt = (n,d=1)=> Number(n).toFixed(d);
 
   /* ================================================================== part switching */
-  function initParts(){
+  let impCount = 0;
+
+  function chipLabel(p, i){
+    return (p && p._label) ? p._label : '件 ' + String.fromCharCode(65 + i);
+  }
+
+  function initParts(){ renderChips(0); }
+
+  function renderChips(active){
     const host = $('parts');
-    host.innerHTML = '<span class="lab">示例零件</span>' + PARTS.map((p,i)=>
-      `<button class="chip${i===0?' on':''}" data-i="${i}"><b>件 ${String.fromCharCode(65+i)}</b></button>`
+    host.innerHTML = '<span class="lab">零件</span>' + PARTS.map((p,i)=>
+      `<button class="chip${i===active?' on':''}${p.imported?' imp':''}" data-i="${i}"><b>${chipLabel(p,i)}</b></button>`
     ).join('');
     host.querySelectorAll('.chip').forEach(b=>{
       b.onclick = ()=>{
-        if (S.run) return;
+        if (S.run) cancelRun();
         host.querySelectorAll('.chip').forEach(x=>x.classList.remove('on'));
         b.classList.add('on');
         loadPart(Number(b.dataset.i));
         setTimeout(()=>{ if(!S.run) runPipeline(); }, 420);
       };
     });
+    const on = host.querySelector('.chip.on');
+    if (on && on.scrollIntoView) on.scrollIntoView({ inline:'nearest', block:'nearest' });
   }
 
   function loadPart(i){
@@ -491,7 +548,14 @@ window.addEventListener('error', function(e){
     S.selInstance = -1;
     S.revision++;
     buildFaceMap();
-    S.bottomFaces = new Set(S.part.instances.map(i=>i.bottom).filter(x=>x!==null));
+    // 底面集合：走网络时用 bottomMask（覆盖未成实例的底面），否则用实例里的 bottom
+    if (S.part._net && S.part._net.bottomMask){
+      const bs = new Set();
+      S.part._net.bottomMask.forEach((v,f)=>{ if (v) bs.add(f); });
+      S.bottomFaces = bs;
+    } else {
+      S.bottomFaces = new Set(S.part.instances.map(i=>i.bottom).filter(x=>x!==null));
+    }
     S.areaTotal = S.part.faces.reduce((a,f)=>a+(f.area||0),0)||1;
     renderModel(S.part._decoded);
     fitCamera();
@@ -500,6 +564,68 @@ window.addEventListener('error', function(e){
     drawGraph();
     hudClear();
     setFlowIdle();
+    applyPartMeta(S.part);
+  }
+
+  /* 本地导入 vs 样例：徽标 / 页脚口径要跟着换，别把规则识别说成网络推理 */
+  function applyPartMeta(p){
+    const imported = !!p.imported;
+    const net = p._net;
+    $('mdlTag').textContent = imported ? '本地 STEP · B-Rep' : 'STEP / B-Rep';
+    const badge = $('badge'), tx = $('badgeTx');
+    if (imported && net){
+      tx.textContent = '本地文件 · AAGNet 推理';
+      badge.title = '本地导入：STEP 在浏览器内解析出真实 B-Rep，gAAG 属性按 AAGExtractor 口径构造，'
+        + '再由 0.436M 参数的 AAGNet 权重在本页做前向（三任务：面语义 / 实例 / 底面）。'
+        + '面数 ' + net.N + ' · 有向边 ' + net.E + ' · 构图 ' + net.msGraph + ' ms · 前向 ' + net.msFwd + ' ms';
+      badge.style.color = '#bff0d0';
+      badge.style.borderColor = '#2f8f63';
+      badge.style.background = '#0b2418';
+    } else if (imported){
+      tx.textContent = '本地文件 · 规则兜底';
+      badge.title = '本地导入：几何与拓扑来自你选择的 STEP 文件，在浏览器内解析；'
+        + 'AAGNet 没能跑起来（' + ((p.nn && p.nn.error) ? p.nn.error : '权重或模型脚本未加载') + '），'
+        + '特征分类退回规则启发式，不是 GNN 输出。';
+      badge.style.color = '#ffe0b0';
+      badge.style.borderColor = '#a5762b';
+      badge.style.background = '#2a1e0b';
+    } else {
+      tx.textContent = '演示样例数据';
+      badge.title = '该页面为交互演示：几何与面拓扑来自真实 STEP 导出模型，识别结果为离线样例数据驱动，并非本页 GNN 实测。';
+      badge.style.color = ''; badge.style.borderColor = ''; badge.style.background = '';
+    }
+    $('fInfo').textContent = imported
+      ? (net ? 'AAGNet 浏览器内推理 · 面语义/实例/底面'
+             : '本地 STEP · 浏览器内解析 · 规则启发式（非网络）')
+      : 'AAGNet · RCIM 2024 · 权重 0.41M';
+    renderImpNote(p);
+  }
+
+  function renderImpNote(p){
+    const el = $('impNote');
+    if (!el) return;
+    if (!p || !p.imported){ el.style.display = 'none'; el.innerHTML = ''; return; }
+    const d = p.diag || {};
+    const net = p._net;
+    const warn = (d.warnings || []).slice(0, 2);
+    el.style.display = 'block';
+
+    let head = `浏览器内解析：${d.faces || p.faces.length} 面 · ${p.triangles} 三角面 · 单位 ${d.unit_mm || 1} mm · ${d.ms || 0} ms`;
+    let body;
+    if (net){
+      const inst = net.instances.length;
+      body = `gAAG：${net.N} 面 / ${net.pairs} 对相邻边（有向 ${net.E}）· 构图 ${net.msGraph} ms · 前向 ${net.msFwd} ms`
+        + `<br>网络给出 <b>${inst}</b> 个特征实例、<b>${net.bottomMask.reduce((a,b)=>a+b,0)}</b> 个特征底面`
+        + (inst ? '；上方列表即网络输出，可点面反查。' : '；该件网络未给出成组实例（多为毛坯面）。');
+      if (p._ruleCount && !inst) body += `<br><span style="opacity:.75">规则启发式另有 ${p._ruleCount} 个候选，仅作参考。</span>`;
+    } else {
+      body = (p.instances.length
+        ? `特征实例 ${p.instances.length} 个由规则生成，可点面反查。`
+        : `未命中内置规则（通孔 / 盲孔 / 型腔 / 槽）：几何与拓扑已解析，可点面查看属性。`)
+        + `<br><span style="opacity:.75">网络未参与（${(p.nn && p.nn.error) ? escapeHtml(p.nn.error) : '权重未加载'}）。</span>`;
+    }
+    el.innerHTML = head + '<br>' + body
+      + (warn.length ? `<br><span style="color:#ffd58a">注意：${warn.join('；')}</span>` : '');
   }
 
   function decodePart(p){
@@ -553,8 +679,18 @@ window.addEventListener('error', function(e){
   function buildFaceMap(){
     const p = S.part;
     S.faceClasses = new Map();
+    // 走网络时用「逐面语义」着色（25 类 → 8 个色桶），比按实例着更贴近三任务里的语义任务；
+    // 走规则时只有实例信息，就按实例类别着。
+    const net = p._net;
+    if (net && net.faceClass){
+      for (let i=0;i<net.N;i++){
+        const k = net.faceClass[i];
+        S.faceClasses.set(i, (k>=0 && net.bucketOf && net.bucketOf[k]) || '毛坯');
+      }
+    } else {
+      p.instances.forEach(it=> it.faces.forEach(f=> S.faceClasses.set(f, it.bucket || it.cls)));
+    }
     const counts = {};
-    p.instances.forEach(it=> it.faces.forEach(f=> S.faceClasses.set(f, it.cls)));
     p.faces.forEach(f=>{
       const c = S.faceClasses.get(f.id) || '毛坯';
       counts[c] = (counts[c]||0)+1;
@@ -962,11 +1098,13 @@ window.addEventListener('error', function(e){
     $('mFace').textContent = p.faces.length;
     $('mEdge').textContent = p.edges.length;
     $('tabN').textContent = p.instances.length;
-    $('mInfer').textContent = (18 + p.faces.length*0.9).toFixed(0)+' ms';
+    $('mInfer').textContent = p.imported
+      ? ((p.diag && p.diag.ms) || 0) + ' ms'
+      : (18 + p.faces.length*0.9).toFixed(0)+' ms';
 
     // sum cards
     const clsCount = {};
-    p.instances.forEach(it=> clsCount[it.cls]=(clsCount[it.cls]||0)+1);
+    p.instances.forEach(it=> { const b = it.bucket || it.cls; clsCount[b]=(clsCount[b]||0)+1; });
     const avgConf = p.instances.reduce((a,b)=>a+b.conf,0)/Math.max(p.instances.length,1);
     $('sum').innerHTML = [
       ['特征实例', p.instances.length, ''],
@@ -977,12 +1115,13 @@ window.addEventListener('error', function(e){
 
     // feature list
     const list = p.instances.map((it,i)=>{
-      const col = CLASS[it.cls].hex;
+      const col = (CLASS[it.bucket || it.cls] || CLASS['毛坯']).hex;
       const faces = it.faces.map(f=>`<span class="face${f===it.bottom?' bot':''}" data-f="${f}">F${f}</span>`).join('');
       const params = it.params.map(([k,v])=>`${k} <u>${v}</u>`).join(' · ');
       return `<div class="feat" data-i="${i}" style="border-left-color:${col}">
         <div class="head">
           <span class="nm" style="color:${col}">${it.cls}</span>
+          ${it.en ? `<span class="kid" style="opacity:.55">${it.en}</span>` : ''}
           <span class="kid">${it.key}</span>
           <span class="cf">conf <b>${it.conf.toFixed(2)}</b></span>
         </div>
@@ -1001,9 +1140,11 @@ window.addEventListener('error', function(e){
     $('featNote').innerHTML = `共 ${p.instances.length} 个实例、${p.faces.length} 个 B-Rep 面；其中 ${p.faces.length-[...S.faceClasses.keys()].length} 个面未归入特征（毛坯面 / 未识别）。点击实例可在三维视图中高亮其面集合。`;
 
     // legend
-    const order=['通孔','盲孔','型腔','槽','台阶','毛坯'];
-    $('legend').innerHTML = order.filter(c=>true).map(c=>{
-      const n = c==='毛坯' ? (p.faces.length - (S.faceClasses.size)) : p.faces.filter(f=>(S.faceClasses.get(f.id)||'毛坯')===c).length;
+    const order = ['通孔','盲孔','型腔','槽','台阶','倒角','圆角','毛坯'];
+    $('legend').innerHTML = order.map(c=>{
+      const n = (c==='毛坯' && !p._net)
+        ? (p.faces.length - S.faceClasses.size)
+        : p.faces.filter(f=>(S.faceClasses.get(f.id)||'毛坯')===c).length;
       if (!n) return '';
       const off = S.hidden.has(c)?' off':'';
       return `<div class="row${off}" data-c="${c}"><i class="sw" style="background:${CLASS[c].hex}"></i>${c}<span class="n">${n} 面</span></div>`;
@@ -1072,8 +1213,15 @@ window.addEventListener('error', function(e){
         bottom_face: it.bottom, confidence: Number(it.conf.toFixed(3)),
         params: Object.fromEntries(it.params.map(([k,v])=>[k,v]))
       })),
-      demo: 'sample data (offline), not network inference'
+      // 口径必须跟着来源走：样例件是离线样例数据，导入件是本地真解析 + 规则分类
+      demo: p.imported
+        ? 'geometry parsed locally from STEP (real B-Rep, ' + ((p.diag&&p.diag.ms)||0) + ' ms); feature classes from rule heuristics, not network inference'
+        : 'sample data (offline), not network inference'
     };
+    if (p.imported && p.diag){
+      out.parse = { file: p.diag.file, bytes: p.diag.bytes, unit_mm: p.diag.unit_mm,
+                    faces: p.diag.faces, edges: p.diag.edges, skipped: p.diag.skipped, warnings: p.diag.warnings };
+    }
     $('json').textContent = JSON.stringify(out, null, 2);
     $('json')._raw = out;
   }
@@ -1180,8 +1328,14 @@ window.addEventListener('error', function(e){
   ];
   function renderSteps(state){
     const p=S.part;
-    const times = ['6 ms','9 ms','21 ms','5 ms','—'];
-    $('steps').innerHTML = STEPS.map(([t,d],i)=>{
+    const imp = !!(p && p.imported);
+    const steps = imp
+      ? [['STEP 解析','浏览器内读实体表，文件不上传'], STEPS[1], STEPS[2], STEPS[3], STEPS[4]]
+      : STEPS;
+    const times = imp
+      ? [((p.diag&&p.diag.ms)||0)+' ms','—','—','—','—']
+      : ['6 ms','9 ms','21 ms','5 ms','—'];
+    $('steps').innerHTML = steps.map(([t,d],i)=>{
       const st = state[i]||'';
       return `<div class="step ${st}"><div class="ic">${st==='done'?'✓':i+1}</div>
         <div class="tx"><b>${t}</b><span>${d}</span></div><div class="ms">${st==='done'?(times[i]):''}</div></div>`;
@@ -1193,9 +1347,23 @@ window.addEventListener('error', function(e){
     $('flowState').textContent='待运行';
   }
 
+  let runId = 0;
+  function cancelRun(){
+    if (!S.run) return;
+    runId++;
+    S.run = false;
+    $('btnRun').disabled = false;
+    $('scan').classList.remove('on');
+    $('hint').style.opacity = 1;
+    $('flowState').textContent = '待运行';
+    $('flowBar').style.width = '0%';
+  }
+
   function runPipeline(){
     if (S.run) return;
     S.run=true;
+    S.runId = ++runId;
+    const myId = S.runId;
     $('btnRun').disabled=true;
     $('scan').classList.add('on');
     $('hint').style.opacity=0;
@@ -1207,6 +1375,7 @@ window.addEventListener('error', function(e){
     ];
     let i=0;
     const tick=()=>{
+      if (S.runId !== myId) return;
       const st=['done','done','idle','idle','idle'];
       if (i>=1) st[0]='done';
       if (i>=2) st[1]='done';
@@ -1228,7 +1397,12 @@ window.addEventListener('error', function(e){
     $('scan').classList.remove('on');
     $('hint').style.opacity=1;
     $('flowState').textContent='完成';
-    toast('识别完成：'+S.part.instances.length+' 个特征实例，'+(18+S.part.faces.length*0.9).toFixed(0)+' ms');
+    if (S.part.imported){
+      const ms=(S.part.diag&&S.part.diag.ms)||0;
+      toast('识别完成：'+S.part.instances.length+' 个特征实例 · 本地规则 '+ms+' ms');
+    } else {
+      toast('识别完成：'+S.part.instances.length+' 个特征实例，'+(18+S.part.faces.length*0.9).toFixed(0)+' ms');
+    }
   }
 
   /* ================================================================== misc */
@@ -1265,6 +1439,7 @@ window.addEventListener('error', function(e){
         $('pane-'+b.dataset.pane).classList.add('on');
       };
     });
+    bindImport();
   }
 
   function downloadJson(){
@@ -1272,9 +1447,139 @@ window.addEventListener('error', function(e){
     const blob = new Blob([JSON.stringify(data,null,2)], {type:'application/json'});
     const a=document.createElement('a');
     a.href=URL.createObjectURL(blob);
-    a.download=(S.part.source||'part').replace(/\.stl$/,'')+'.features.json';
+    a.download=(S.part.source||'part').replace(/\.[^.\\\/]+$/,'')+'.features.json';
     a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
     toast('已导出识别结果 JSON');
+  }
+
+  /* ================================================================== 本地 STEP 导入 */
+  function raf2(){ return new Promise(r=> requestAnimationFrame(()=> requestAnimationFrame(r))); }
+
+  function showImp(title, html, isErr){
+    $('imp').classList.add('on');
+    $('impBox').classList.toggle('err', !!isErr);
+    $('impTitle').textContent = title;
+    $('impMsg').innerHTML = html;
+    $('impSpin').style.display = isErr ? 'none' : 'block';
+    $('impClose').style.display = isErr ? 'inline-flex' : 'none';
+  }
+  function hideImp(){ $('imp').classList.remove('on'); }
+
+  async function importStepFile(file){
+    if (!file) return;
+    if (!window.AAG_STEP){
+      showImp('功能不可用', 'step_import.js 没有加载（可能被安全软件拦截，或不在同目录）。', true);
+      return;
+    }
+    if (!/\.(stp|step)$/i.test(file.name)){
+      showImp('无法导入', '只支持 <b>.stp / .step</b> 文本格式（AP203 / AP214 / AP242 实体模型）。', true);
+      return;
+    }
+    if (S.run) cancelRun();
+
+    showImp('导入本地 STEP', '读取 ' + escapeHtml(file.name) + ' …');
+    await raf2();
+
+    // 先把 AAGNet 拉起来（权重 2.2 MB，首帧之后才加载，避免拖慢页面打开）
+    let netMsg = '';
+    try {
+      showImp('导入本地 STEP', '载入 AAGNet 权重与推理器 …<br><span style="opacity:.7">首次约 2 MB，之后走缓存</span>');
+      await raf2();
+      await ensureNet();
+    } catch (e){
+      netMsg = (e && e.message) ? e.message : String(e);
+    }
+
+    let part;
+    try {
+      const text = await file.text();
+      showImp('导入本地 STEP',
+        '解析实体表 · 三角化 B-Rep 面 · 组 gAAG · 网络前向 …<br>' +
+        '<span style="opacity:.7">全部在本机浏览器内完成，文件不会上传</span>');
+      await raf2();
+      part = window.AAG_STEP.buildPart(text, file.name);
+    } catch (e){
+      showImp('导入失败', escapeHtml(e && e.message ? e.message : String(e)) +
+        '<br><span style="opacity:.65">若来自 CATIA / NX / SolidWorks，导出时请选「AP214 或 AP242 实体」文本 STEP；' +
+        '加密、压缩或二进制格式无法解析。</span>', true);
+      return;
+    }
+    // 规则识别给出的实例先记下来当兜底，再用网络结果覆盖
+    part._ruleCount = part.instances.length;
+    const nn = part.nn;
+    if (nn && !nn.error){
+      part._net = nn;
+      // 网络跑通就以网络为准（可能是 0 个实例）；规则候选只记个数，列表里不混两套口径
+      part.instances = (nn.instances || []).map((it, i)=> Object.assign({}, it, { id: i }));
+      part.diag.instances = part.instances.length;
+    } else if (!netMsg){
+      netMsg = (nn && nn.error) ? nn.error : '权重未加载';
+    }
+    if (!part._net && netMsg) part.diag.warnings = ['AAGNet 未参与：' + netMsg].concat(part.diag.warnings || []);
+
+    hideImp();
+    impCount++;
+    part._label = '本地 ' + impCount;
+    PARTS.push(part);
+    const idx = PARTS.length - 1;
+    renderChips(idx);
+    loadPart(idx);
+    setTimeout(()=>{ if(!S.run) runPipeline(); }, 320);
+    const d = part.diag || {};
+    const tail = part._net
+      ? (' · 网络 ' + part.instances.length + ' 实例 / ' + part._net.msFwd + ' ms')
+      : ' · 规则兜底';
+    toast('已导入 ' + part.faces.length + ' 面' + tail + (d.ms ? (' · 解析 ' + d.ms + ' ms') : ''));
+  }
+
+  /* AAGNet 三件套按需加载：模型 → 推理器 → 权重（2.2 MB）。
+   * 全部同目录静态文件，失败就返回 false，导入流程退回规则识别。 */
+  let netPromise = null;
+  function loadScriptOnce(src){
+    return new Promise((res, rej)=>{
+      const s = document.createElement('script');
+      s.src = src; s.async = false;
+      s.onload = ()=> res(true);
+      s.onerror = ()=> rej(new Error(src + ' 加载失败'));
+      document.head.appendChild(s);
+    });
+  }
+  function ensureNet(){
+    if (netPromise) return netPromise;
+    netPromise = (async ()=>{
+      if (!window.AAG_MODEL) await loadScriptOnce('aagnet_model.js');
+      if (!window.AAG_REC) await loadScriptOnce('aagnet_recognize.js');
+      if (!window.AAG_W) await loadScriptOnce('aagnet_weights.js');
+      if (!window.AAG_MODEL.ready()) window.AAG_MODEL.load(window.AAG_W);
+      return true;
+    })().catch(e=>{ netPromise = null; throw e; });
+    return netPromise;
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function bindImport(){
+    $('btnImport').onclick = ()=>{
+      $('fileStep').value = '';
+      $('fileStep').click();
+    };
+    $('fileStep').onchange = e=>{
+      const f = e.target.files && e.target.files[0];
+      if (f) importStepFile(f);
+    };
+    $('impClose').onclick = hideImp;
+    $('imp').onclick = e=>{ if (e.target === $('imp')) hideImp(); };
+    const hasFiles = e => e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0;
+    window.addEventListener('dragover', e=>{ if (hasFiles(e)){ e.preventDefault(); $('drop').classList.add('on'); } });
+    window.addEventListener('dragleave', e=>{ if (e.relatedTarget === null) $('drop').classList.remove('on'); });
+    window.addEventListener('drop', e=>{
+      e.preventDefault();
+      $('drop').classList.remove('on');
+      const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) importStepFile(f);
+    });
   }
 
   /* ================================================================== loop */

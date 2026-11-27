@@ -3,6 +3,9 @@
 面向「YFIDP · AI 工艺助手（基于 AAGNet 的加工特征智能识别）」参赛方案的**可现场演示原型**：
 导入零件 → 面级分割 → 特征实例 → 三视图着色 → gAAG 图 → 特征清单 → 工艺预填 → 结构化 JSON。
 
+除了 3 个内嵌样例件，还能**直接选本地的 `.stp / .step` 文件当场识别**（拖拽或点「导入本地 STP」）：
+STEP 在浏览器内解析成 B-Rep、三角化、建 gAAG，**再跑 AAGNet 真权重**（0.436 M 参数，纯 JS 前向），全程离线、不经过任何服务器。
+
 **零依赖、离线可用**：纯单页 WebGL，不需要 Python / Node / 服务器 / 联网，双击即可打开。
 
 ![演示界面](docs/preview.png)
@@ -27,6 +30,7 @@
 ```
 aagnet-demo/
 ├── index.html              演示页（渲染 / 拾取 / 交互 / UI 全在单文件内）
+├── step_import.js          浏览器内 STEP 解析器（B-Rep → 三角面 → gAAG → 规则实例）
 ├── data.js                 内嵌演示数据（3 个零件的几何 + 面属性 + 实例 + gAAG 边）
 ├── data.json               同上，JSON 版（供外部系统读取 / 联调）
 ├── start-demo.bat          Windows 一键打开
@@ -35,6 +39,11 @@ aagnet-demo/
 │   ├── build_data.py       STL → 焊接 → 面分割 → 面属性 → 实例 → 输出 data.js/json
 │   ├── features.py         实例组装规则（通孔/盲孔/型腔/槽/台阶）
 │   ├── render_preview.py   离线软件光栅化出图（无浏览器时校核用）
+│   ├── make_test_step.py   生成 STEP 自检样例（box / 通孔 / 盲孔 / 型腔 / 缺口）
+│   ├── test_step.js        Node 跑一遍全部 STEP 样例，打印面数/三角面/实例/面积
+│   ├── import_check.js     CDP 走「导入本地 STP」全流程 + 截图（需 Chrome 调试端口）
+│   ├── dbg_cyl.js          逐面检查：UV 环面积 vs 三角面 3D 面积、半径偏差
+│   ├── samples/*.step      自检样例（脚本生成，共约 36 KB）
 │   ├── qa.js               CDP 自动化点击走查 + 截图
 │   └── shot_show.js        生成展示用截图
 └── (shots/)                本地 QA 截图目录，已 gitignore，不在仓库里
@@ -92,7 +101,15 @@ git push
 7. **重新识别（20 s）**
    点右上「重新识别」→ 流程动画重跑、计时器走动。这一下是为了让评委看到它是**在算**，不是静态图片。
 
-8. **换零件（20 s）**
+8. **导入本地 STP（60 s，最有说服力的一段）**
+   点右上「导入本地 STP」或把文件直接拖进模型区，选一个评委自己带的 / 现场导出的 `.stp`：
+   - 页头徽标立刻变成 **「本地文件 · AAGNet 推理」**，chip 行多出「本地 N」，模型区换成真件；
+   - 左侧注明「浏览器内解析：N 面 · M 三角面 · 单位 1 mm · x ms」——这是**当场算出来的**，不是预处理的；
+   - 流程 1、2 步（STEP 解析 / B-Rep → gAAG）显示真实耗时，后面 3~6 步（GNN 推理等）明确标注「示例」。
+   讲：**解析、拓扑、几何属性、gAAG、前向推理全是真的**——0.436 M 权重的 AAGNet 就在这个页面里跑，没有后端、没有联网（见第 7 节）。想当场证明，可以看左下角 "gAAG：N 面 / pairs 对相邻边（有向 E）· 构图 X ms · 前向 Y ms"，那是实测。
+   然后点一个孔壁面，右下「拾取信息」里能看到它的类型 / 面积 / 半径 / 轴向，说明面属性是算出来的。
+
+9. **换零件（20 s）**
    切「件 B」（简单铣件）、「件 C」（复杂件，91 面，部分面未归类——**主动说明覆盖不足**，并讲"这就是为什么要上真网络"）。诚实收尾比吹精度加分。
 
 ---
@@ -105,8 +122,10 @@ git push
 | 面级分割 | **离线算法**：顶点焊接 + 二面角（28°）区域生长，得到近似 B-Rep 面（A 32 / B 31 / C 91 面） |
 | 面属性 | **真实计算**：平面/圆柱判别、Kasa 圆拟合半径与轴线、面积、质心、包围盒 |
 | gAAG 边 | **真实计算**：面邻接（共享边），A 88 / B 84 / C 264 条 |
-| 特征实例 | **规则启发式**（`tools/features.py`），**不是网络输出** |
-| 计时（6/9/21/5 ms） | **演示用示意值**，非实测 |
+| 特征实例（样例件） | **规则启发式**（`tools/features.py` 离线算好写进 `data.js`），**不是网络输出**；样例件来自 STL 近似 B-Rep，没有真拓扑，喂不进 AAGNet |
+| 特征实例（导入件） | **AAGNet 真权重输出**：`weights/weight_on_MFInstseg.pth` → base64 float32 → 纯 JS 前向，107 张量全用上 |
+| 导入的本地 STP | **全部真实计算**：STEP 文本解析 → B-Rep 拓扑 → 曲面三角化 → 面/边属性 → gAAG → AAGNet 前向，均在浏览器内完成。徽标切成「本地文件 · AAGNet 推理」；网络不可用时才回落到规则并写清原因 |
+| 计时（样例件 6/9/21/5 ms） | **演示用示意值**，非实测；**导入件的解析毫秒数是 `performance.now()` 实测**，两者在页面上分开展示 |
 | 98.2% 面准确率 / 0.41 M 参数 / 47 ms 单件推理 | **论文口径（MFInstSeg）**，页面已注明"参考"，未在本机重算 |
 | 工时 / 刀具 / 转速 | 按规则预填的**示例工艺**，需工艺员确认 |
 
@@ -148,7 +167,126 @@ python tools\build_data.py
 
 ---
 
-## 6. 通往真实推理的接入路径
+## 6. 导入本地 STP（浏览器内解析，离线）
+
+点页头右上「导入本地 STP」，或把 `.stp / .step` 直接拖进模型区。整个过程在浏览器里跑完，不上传、不联网、不需要后端。
+
+`step_import.js` 干的事（约 1460 行，无依赖）：
+
+| 阶段 | 做了什么 |
+|---|---|
+| 1. 文本解析 | 扫描 `#id=TYPE(...);` 语句，递归解析字符串 / 引用 / 枚举 / 复合实体（`(A()B()C())`），处理 `*`、`$` |
+| 2. 拓扑 | `ADVANCED_FACE` / `FACE_OUTER_BOUND` / `EDGE_LOOP` / `ORIENTED_EDGE` → 按 `same_sense` ⊕ `orientation` 定方向，拼出每个面的有序边界环 |
+| 3. 曲线离散 | `LINE` / `CIRCLE` / `ELLIPSE`(含圆弧方向与 180° 歧义裁决) / `POLYLINE` / B 样条 / `TRIMMED_CURVE` / `SURFACE_CURVE` / `COMPOSITE_CURVE` |
+| 4. 三角化 | 曲面按 `uvOf` 映到参数域（周期面按 π 解绕），内环桥接 + 耳切（按**形状质量**选耳，避免在长条参数域里切出跨弧长的细长三角），再 `evalUV` 回三维 |
+| 5. 面属性 | 面积、质心、包围盒、法向、圆柱半径/轴向、包角 `arcDeg`（区分整圈孔壁与局部弧面） |
+| 6. gAAG | 按"量化端点"做边键 → 面邻接，每对相邻面写**两条有向边**（对齐 occwl 的 `nx.DiGraph`） |
+| 7. AAGNet 推理 | `aagnet_recognize.js` 组装 gAAG（面属性 10 维 + UV 网格 7×5×5 + 边属性 12 维）→ `aagnet_model.js` 纯 JS 前向 → 语义 / 实例 / 底面三组 logits → 实例后处理 |
+| 8. 规则兜底 | 网络不可用（权重缺失、异常面）时回落到 `tools/features.py` 同口径的几何规则：同轴同径**整圈**圆柱聚类成孔，朝上平面 + 从它升起的墙 → 腔槽 |
+| 9. 输出 | 与 `data.js` **完全同构**（`faces / instances / edges / size_mm / positions_b64 / faceids`），所以渲染与交互代码一行没改 |
+
+单位：读 `SI_UNIT(.MILLI.,.METRE.)` 前缀与 `CONVERSION_BASED_UNIT`（INCH / FOOT）自动换算 mm。
+
+**面类型**：平面 / 圆柱面 / 圆锥 / 球面 / 圆环 / B 样条（锥/球/环/样条参与 gAAG 的类型 one-hot，但规则兜底只认平面和圆柱）。
+**特征分类**：AAGNet 覆盖全部 25 类；规则兜底只覆盖 通孔 / 盲孔 / 型腔 / 槽 / 台阶，其余会写"未命中内置规则"。
+
+**不支持**（会给出提示或跳过，不会崩）：
+
+- 二进制 / 加密 / 压缩的 STEP，或 `.stp` 实为 IGES / JT / Parasolid（页面会提示"没有找到 STEP 实体"）；
+- 装配体实例化（`MAPPED_ITEM` / `NEXT_ASSEMBLY_USAGE_OCCURRENCE`）——多实体按"部件"逐个读，装配变换**未叠加**，多零件装配会重叠在原点；
+- 超大模型：单件建议 < 2 万面，否则三角化会明显变慢（页面上会显示实际毫秒数）。
+
+### 自检
+
+样例件由 `tools/make_test_step.py` 现场生成（手写最小 B-Rep，几何可解析核对）：
+
+```bash
+python tools/make_test_step.py              # 生成 tools/samples/*.step
+node   tools/test_step.js                   # 面数 / 面积 / 三角面数防回归
+node   tools/nn_test.js tools/samples/*.step   # 端到端跑 AAGNet，看面级类别 + 实例
+node   tools/cmp_forward.py 需要先 dump：node tools/dump_graph.js <x.step> tools/out/x && python tools/cmp_forward.py tools/out/x
+```
+
+`nn_test.js` 的判定值（**这五个件网络全部给对了，conf 都是 1.00**，用来防回归）：
+
+| 样例 | 面 / 有向边 | AAGNet 实例 | 底面 |
+|---|---|---|---|
+| `box.step` 60×40×10 | 6 / 24 | 无（6 面全 stock） | 无 |
+| `plate_hole.step` 通孔 | 7 / 28 | `through_hole` ×1（面 6） | 无 |
+| `plate_blind.step` 盲孔 | 8 / 28 | `blind_hole` ×1（面 6,7） | 面 6 |
+| `plate_pocket.step` 型腔 | 11 / 48 | `rectangular_pocket` ×1（面 6..10） | 面 6 |
+| `plate_notch.step` 半圆缺口 | 8 / 36 | `circular_through_slot` ×1（面 7） | 无 |
+
+---
+
+## 7. AAGNet 移植（默认推理路径）
+
+目标：**在浏览器里跑 `AAGNet-main` 仓库的真权重**，不联网、不要 Python、不改"双击 index.html 就能用"。
+
+### 7.1 三个文件
+
+| 文件 | 行数 | 作用 |
+|---|---|---|
+| `aagnet_weights.js` | 2.3 MB | `tools/pth2js.py` 把 `weights/weight_on_MFInstseg.pth` 拍平成 base64 float32 + 名字→偏移索引（107 张量 / 436 415 参数），无 torch 依赖 |
+| `aagnet_model.js` | ~390 | 纯 JS 前向：`Linear / LayerNorm / BatchNorm / Mish / Conv2d / AdaptiveAvgPool / PNAConvTower / NodeMPNN / 三个头` |
+| `aagnet_recognize.js` | ~700 | STEP 面 → gAAG（对齐 `dataset/AAGExtractor.py` + `feature_lists/all.json` + `weights/attr_stat.json`）→ 前向 → 后处理 |
+
+页面侧 `importStepFile()` 先 `await ensureNet()`（按需注入这三个脚本，失败就回落规则），徽标三态：`本地文件 · AAGNet 推理` / `本地文件 · 规则兜底`（hover 显示失败原因）/ `演示样例数据`。
+
+### 7.2 gAAG 口径（照抄 AAGExtractor，别自己发挥）
+
+- **面属性 10 维**：`Plane/Cylinder/Cone/Sphere/Torus` one-hot + 面积 + 有理 NURBS 标志 + 质心 xyz
+- **面 UV 网格 7×5×5**：`xyz + 法向 xyz + 裁剪掩码`，共 175 个 float；u/v 各 5 个采样点取在 **uv 包围盒** 的 `linspace(a, b, 5)` 上；面是 REVERSED 时整块网格沿 u 反向（`reverse_order_with_face`）
+- **边属性 12 维**：`凹 / 凸 / 光滑 + 长度 + 圆 + 闭 + 椭圆 + 非有理样条 + 有理样条 + 直线 + 非有理样条 + 有理样条`（后四项里有两对重复，是 `all.json` 原样）
+- **标准化**：`utils/data_utils.standardization()` 按 `weights/attr_stat.json` 做 `(x-mean)/std`，`std<1e-8` 置 1。**这步必须开**（`center_and_scale` 反而必须关，推理端是 `False`）
+- **双向边**：occwl 的 `face_adjacency` 是 `nx.DiGraph`，每对相邻面 `add_edge(a,b)` + `add_edge(b,a)`，两条边属性相同。DGL 的 `update_all` 只沿入边聚合，**少一个方向等于每个面的邻居消息减半**
+
+### 7.3 踩过的三个坑（都会让结果系统性偏成"全是毛坯"）
+
+1. **裁剪掩码的方向搞反了**（影响最大）。`occwl.uvgrid(method="inside")` 走的是 `BRepTopAdaptor_FClass2d.Perform(uv) == TopAbs_IN`——**只有严格在裁剪域内才是 1，落在边界上（TopAbs_ON）是 0**。5×5 网格的 u/v 端点又正好压在 uv 包围盒的边界上，所以矩形面的掩码必然是「外圈一圈 0、中间 3×3 为 1」。早期版本把"边界上"算成面内，掩码恒为 1，特征整体偏出训练分布，五个夹具全部退化。改对之后 `box / plate_hole / plate_blind / plate_pocket` 一次全对，conf = 1.00。
+2. **带孔面的面积被重复计数**。桥接 + 耳切对弱简单多边形偶尔会切出反向的耳朵（自交），按 `|三角形|` 累加会把重叠区算两遍（典型 7328 mm² 的面真值 2534，偏 2.9 倍，把 area 特征推到 +9σ）。改成用 uv 面积的**符号**做权重累加，重叠自然抵消；渲染的三角形一个不少。
+3. **凸凹判定的符号依赖"哪一侧算左面"**。原来用 `dot(cross(nA,nB), t)` 配 `flipT` 定切向，A/B 一旦取反结论就翻，在这类复杂件上退化成"一半凸一半凹"。改成 orientation-free 的**几何探针**：在 B 上贴着边往面内挪一小步得到 qB，凸边时 B 往 A 的内侧塌，`dot(nA, qB−p) < 0`。夹具体上两种方法 100% 一致，复杂件上凸/凹比例从 46%/48% 回到 76%/18%（训练集先验 66%/30%）。
+
+另外两处小修：`BatchNorm` 的通道号在 NCHW 展平后是 `floor(i/spatial)` 不是 `i % chan`；`addScaled` 的 scale 向量长度是通道数（128），不是展平长度。
+
+### 7.4 前向正确性怎么验的
+
+`tools/ref_forward.py` 用 numpy 从零复刻同一套前向（`pna_conv / node_mpnn_relu / grid_encode / mlp`），`tools/cmp_forward.py` 逐阶段对拍：
+
+```
+node tools/dump_graph.js tools/samples/plate_pocket.step tools/out/pp
+python tools/ref_forward.py tools/out/pp
+python tools/cmp_forward.py tools/out/pp
+# 期望：ha / hg / h0 / he / after_layer0 / after_layer2 / local / mean / global / seg / bottom / inst 全 OK
+#       maxabs ~1e-6（float32 量级）
+```
+
+256 维头输入、320 维 PNA message、384 维 U 输入的形状都从权重形状反推验证过：`conv.M.weight = 128×320 = 128×(128+128+64)`、`conv.U.weight = 128×384 = 128×((2×1+1)×128)`、`seg_head.linears.1.weight = 64×25`。这几条一旦对不上，说明聚合器/scaler 的配置抄错了。
+
+### 7.5 用仓库自带的带标注样本做验证
+
+`AAGNet-main/dataset/test.step` + `test.json`（27 面，MFInstSeg 口径的 seg/inst/bottom 标注）：
+
+```bash
+node tools/cmp_label.js "C:/.../AAGNet-main/dataset/test.step" "C:/.../AAGNet-main/dataset/test.json"
+```
+
+结果（2024 权重，面属性 10 维 + UV 网格 + 12 维边属性全部按上面的口径）：
+
+| 指标 | 结果 |
+|---|---|
+| 类别**面数**分布 | `through_hole 9 · rectangular_blind_step 10 · round 2 · stock 6` —— **与标注完全一致** |
+| 实例结构 | 3 个矩形盲台阶（面数 3 / 4 / 3）+ 8 个通孔 + 2 个圆角 —— 与标注的实例划分同构 |
+| 特征底面 | 4 个 —— 与标注的 4 个数量相同 |
+| 逐面命中 | 15/27（55.6%） |
+
+逐面命中率上不去的原因是**面号对不上**而不是网络错：`test.json` 的面号来自 MFCAD++ 生成器内部那张 shape，经过 STEP 写盘 → OCC `STEPControl_Reader` 重新 sewing 之后面序会变；`node tools/cmp_label.js` 里逐面比的是"文件里的 `ADVANCED_FACE` 顺序"，两边不是同一套编号。判断依据是上面那条：面数分布、实例规模、底面数量三项全部对齐——如果是特征提取跑偏，这三项不可能同时对。
+
+> 需要严格逐面对齐的话，用 `AAGExtractor` 在本机跑一遍（需要 pythonocc-core + occwl + dgl + torch），把导出的 `graph_face_attr / graph_face_grid / graph_edge_attr` 当成黄金参考再对。
+
+---
+
+## 8. 通往真实推理的接入路径
 
 演示页只认 `window.AAG_DEMO` 这一份数据结构，所以替换后端不用改前端：
 
@@ -162,22 +300,32 @@ python tools\build_data.py
 
 ---
 
-## 7. 已知限制
+## 9. 已知限制
 
-- **分割是几何近似**：C 件 91 面中有过分割，71 个面未归入任何实例（页面图例与脚注已如实标注）。A 件 32 面、9 实例覆盖较好；B 件 31 面、6 实例。
-- **规则不是学习**：孔的通/盲由"两端是否都有端盖面"判定，腔槽由"上升墙面方向数 ≥3 / 长宽比"判定，遇到非轴类特征（自由曲面、螺纹、斜顶孔）会退化。
+- **两套识别器并存**：样例件（A/B/C）是预构建的 `data.js`，标注是离线算好的；导入件默认走 AAGNet，网络没起来才回落到几何规则。两条路的分类口径不同（25 类 vs 5 类），页面徽标会写清当前是哪一条。
+- **AAGNet 只覆盖 25 个加工特征类**：非加工特征（自由曲面、螺纹、扫描体）会被硬塞进最像的那一类，或者判成 stock。这是数据集口径决定的，不是移植误差。
+- **规则兜底是几何近似**：孔的通/盲按"圆柱两端是否被**单环、面积≈πr²**的平面封住"判定（环形端面不算封盖，所以通孔不会被误判成盲孔）；腔槽由"上升墙面数 / 长宽比"判定。遇到非轴类特征、锥形孔底、球头孔底会退化。
+- **导入件与样例件走两条路**：样例件是 STL 三角面区域生长出"近似 B-Rep 面"，导入件是 STEP 真 B-Rep。所以同一个零件两种来源的面数可能不同（近似面 vs 真面），这是口径差异，不是 bug。
+- **gAAG 的边属性没有左右法向**：`all.json` 里 `UV-grid.num_crv_u = 0`，所以边网格（`edge_grid_grid`）不参与计算，边只用 12 维标量属性。别以为漏了 12×N 的边网格。
+- **`center_and_scale` 必须关**：训练端 `dataloader/mfinstseg.py` 开 `center_and_scale=True`，但**推理端**（`infer_speed_test.py` / `qt5_visualization.py`）是 `False`。跟着推理端走，否则网格会被二次居中缩放。
+- **导入件不做装配变换**，多实体文件会叠在原点（见第 6 节）。
 - **不做碰撞/可达性/装夹分析**，工艺排序是模板顺序，不含真正的工艺决策。
 - 面拾取用离屏 ID 缓冲（RGB 编码面 ID），面数 > 16.7 M 才会溢出，本演示远未触及。
 
 ---
 
-## 8. 常见问题
+## 10. 常见问题
 
 - **模型区黑屏 / 只有底色**：显卡驱动或远程桌面禁用硬件加速。Chrome 打开 `chrome://gpu` 确认 WebGL 可用；远程桌面下可加启动参数 `--enable-unsafe-swiftshader`（软件渲染，帧率低但可用）。
 - **页面空白、右侧清单为空**：`data.js` 没加载（被安全软件拦截、或 `data.js` 不在同目录）。检查同目录是否有 `data.js`，大小约 423 KB。
 - **在线版打不开 / 404**：确认 GitHub Pages 已开启且分支/目录选对（见第 2 节）；仓库若为私有，Pages 需 GitHub Pro 或改为公开仓库。
 - **字体偏小**：页面按 1600×1000 设计，投屏建议 1080p 全屏（F11）；更小窗口会压缩右侧清单。
 - **截图发白/看不清**：本地重新生成的 `shots/*.png` 是自写 zlib 编码，部分查看器不认；同目录 `*_v.png` 是 GDI+ 重编码的版本（可用 `tools/png_fix.ps1` 批量转换），用这些。
+- **导入后提示"没有找到 STEP 实体"**：文件不是 ISO-10303-21 文本格式（可能是二进制 STEP、压缩包、IGES 改后缀）。用文本编辑器打开，开头应是 `ISO-10303-21;`。
+- **导入 `AAGNet-main/examples/partA.step` 显示 66847 mm 那么大**：文件里 `SI_UNIT($,.METRE.)` 写的是**米**，而坐标数值只有 66.8 —— 这是那个文件导出时的单位写错了，不是解析错。OCC（`STEPControl_Reader` + `Interface_Static xstep.cascade.unit=MM`）读出来同样是 66800 mm。AAGNet 自己不受影响，因为 `scale_solid_to_unit_box` 会先归一化到单位盒。
+- **导入后提示"没有找到 B-Rep 面"**：文件只有线框 / 曲面片（`SHELL_BASED_SURFACE_MODEL` 之外的非实体表达），或者被 `MAPPED_ITEM` 包了一层。用 CAD 里"导出 STEP AP214 实体"重新导出即可。
+- **导入件 0 个特征但模型正常**：说明几何解析成功、这件确实没有加工特征（例如光板），或者网络把整件判成了 stock。看页头徽标：`AAGNet 推理` 说明是真网络结论；`规则兜底` 说明网络没起来，hover 徽标能看到失败原因（通常是权重文件没加载）。
+- **导入件模型很大、卡**：单件面数建议 < 2 万（页面上会显示解析毫秒数）。超大件请先在 CATIA / NX / SolidWorks 里做"简化 / 去参"再导出。
 
 ---
 
