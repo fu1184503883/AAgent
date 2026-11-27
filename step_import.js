@@ -1030,6 +1030,91 @@
     return earClip(poly);
   }
 
+  /* ---------------------------------------------------------------- 3.9 网格细分
+   * 耳切只在边界点之间连三角：一张曲面片内部一个采样点都没有，整个圆柱面
+   * 可能就是一个跨度 90° 的平面三角形。着色出来是棱面，轮廓也是折线。
+   *
+   * 这里在 uv 域做自适应 1→4 细分，两条判据：
+   *   sagitta —— 重心处真实曲面点到三角形平面的距离（弦高误差，决定曲面看起来光不光）
+   *   maxLen  —— 3D 边长上限（保证三角形不被拉成细长条，明暗过渡才不会跳）
+   * 平面直接返回：平面上细分没有任何视觉收益，纯烧顶点。
+   *
+   * 预算按面给（buildPart 按总面数分摊），到顶就停止细分但没有丢弃 ——
+   * 宁可局部精度低一点，也不能让 4500 面的件把浏览器顶死。 */
+  function refineTris(surf, tris, tol, maxLen, budget, maxDepth) {
+    if (!tris.length || surf.kind === 'Plane') return tris;
+    var out = [], stack = [];
+    for (var i = 0; i < tris.length; i++) stack.push([tris[i], 0]);
+
+    /* 顶点求值缓存：1→4 时每个子三角形都在复用父三角形的中点，
+     * 同一条边被两个三角形共享 —— 不缓存的话曲面求值次数翻四倍。
+     * key 用两个双精度数的 toString：同一对 (u,v) 一定得到同一个字符串，
+     * 中点 (a+b)/2 在相邻两边上也一定是同一个双精度值，命中率接近 100%。 */
+    var memo = new Map();
+    function ev(uv) {
+      var k = uv[0] + '|' + uv[1];
+      var p = memo.get(k);
+      if (p === undefined) { p = surf.evalUV(uv[0], uv[1]); memo.set(k, p); }
+      return p;
+    }
+    function midUV(a, b) { return [(a[0] + b[0]) * 0.5, (a[1] + b[1]) * 0.5]; }
+    function d2(a, b) { var x = a[0] - b[0], y = a[1] - b[1], z = a[2] - b[2]; return x * x + y * y + z * z; }
+
+    var tol2 = tol * tol, maxLen2 = maxLen * maxLen;
+    while (stack.length) {
+      var item = stack.pop(), t = item[0], d = item[1];
+      if (d >= maxDepth || out.length >= budget) { out.push(t); continue; }
+      var A = ev(t[0]), B = ev(t[1]), C = ev(t[2]);
+      if (!A || !B || !C) { out.push(t); continue; }
+
+      var split = false;
+      /* 边长先判：一次比较就能挡掉绝大多数已经够小的三角形，不用去求重心 */
+      if (d2(A, B) > maxLen2 || d2(B, C) > maxLen2 || d2(C, A) > maxLen2) split = true;
+      if (!split) {
+        var ux = B[0] - A[0], uy = B[1] - A[1], uz = B[2] - A[2];
+        var vx = C[0] - A[0], vy = C[1] - A[1], vz = C[2] - A[2];
+        var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+        var nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
+        if (nl > 1e-16) {
+          nx /= nl; ny /= nl; nz /= nl;
+          var G = ev([(t[0][0] + t[1][0] + t[2][0]) / 3, (t[0][1] + t[1][1] + t[2][1]) / 3]);
+          if (G) {
+            var dd = (G[0] - A[0]) * nx + (G[1] - A[1]) * ny + (G[2] - A[2]) * nz;
+            if (dd * dd > tol2) split = true;
+          }
+        }
+      }
+      if (!split) { out.push(t); continue; }
+
+      var m01 = midUV(t[0], t[1]), m12 = midUV(t[1], t[2]), m20 = midUV(t[2], t[0]);
+      stack.push([[t[0], m01, m20], d + 1]);
+      stack.push([[m01, t[1], m12], d + 1]);
+      stack.push([[m20, m12, t[2]], d + 1]);
+      stack.push([[m01, m12, m20], d + 1]);
+    }
+    return out;
+  }
+
+  /* 全局尺度：拿 CARTESIAN_POINT 的包围盒对角线当「单位」。
+   * 细分容差与目标边长都按它的比例给，这样 20 mm 的小板和 2 m 的蒙皮
+   * 都能得到疏密相当的网格，不用为每个件手调参数。 */
+  function estimateScale(doc) {
+    var arr = doc.d.byType.get('CARTESIAN_POINT') || [];
+    var mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
+    for (var i = 0; i < arr.length; i++) {
+      var e = doc.e.get(arr[i]);
+      var c = e && e.args[1];
+      if (!c || c.length < 3) continue;
+      var x = +c[0], y = +c[1], z = +c[2];
+      if (!isFinite(x) || !isFinite(y) || !isFinite(z)) continue;
+      if (x < mn[0]) mn[0] = x; if (x > mx[0]) mx[0] = x;
+      if (y < mn[1]) mn[1] = y; if (y > mx[1]) mx[1] = y;
+      if (z < mn[2]) mn[2] = z; if (z > mx[2]) mx[2] = z;
+    }
+    var dg = Math.hypot(mx[0] - mn[0], mx[1] - mn[1], mx[2] - mn[2]);
+    return dg > 0 && isFinite(dg) ? dg : 1;
+  }
+
   function tessFace(doc, fid, fe, ctx) {
     var surf = makeSurface(doc, fe.args[2], ctx);
     if (!surf) { ctx.skip('面 #' + fid + '：曲面无法解析'); return null; }
@@ -1086,7 +1171,31 @@
     var tris = triangulate(loopsUV);
     if (!tris.length) { ctx.skip('面 #' + fid + '：三角化失败（' + loopsUV.length + ' 环）'); return null; }
 
-    var pos = [], verts = [], area = 0, cx = 0, cy = 0, cz = 0, nx = 0, ny = 0, nz = 0;
+    /* 小面直接跳过：弦高不会超过边长本身，面比容差还小的时候拆它没有意义。
+     * 这一步只看边界点的包围盒，不调曲面求值 —— 大件上能省掉绝大多数判定
+     * （4518 个面里需要细分的不到十分之一，逐个跑 refineTris 纯属白烧 4 秒）。 */
+    var needRefine = false;
+    if (surf.kind !== 'Plane' && isFinite(ctx.tol) && ctx.tol > 0) {
+      var lo0 = [Infinity, Infinity, Infinity], hi0 = [-Infinity, -Infinity, -Infinity];
+      for (var rb = 0; rb < raw.length; rb++) {
+        var bp = raw[rb].pts;
+        for (var bi = 0; bi < bp.length; bi++) {
+          for (var bc = 0; bc < 3; bc++) {
+            if (bp[bi][bc] < lo0[bc]) lo0[bc] = bp[bi][bc];
+            if (bp[bi][bc] > hi0[bc]) hi0[bc] = bp[bi][bc];
+          }
+        }
+      }
+      var fdiag = Math.hypot(hi0[0] - lo0[0], hi0[1] - lo0[1], hi0[2] - lo0[2]);
+      needRefine = fdiag > ctx.tol * 8;
+    }
+
+    /* 渲染精度：按弦高误差把曲面补密。平面跳过，每面有三角形预算。 */
+    if (needRefine) {
+      tris = refineTris(surf, tris, ctx.tol, ctx.maxLen, ctx.faceBudget, 4);
+    }
+
+    var pos = [], verts = [], uvs = [], triN = [], area = 0, cx = 0, cy = 0, cz = 0, nx = 0, ny = 0, nz = 0;
     var bmin = [Infinity, Infinity, Infinity], bmax = [-Infinity, -Infinity, -Infinity];
     var count = 0;
     for (var q3 = 0; q3 < tris.length; q3++) {
@@ -1114,11 +1223,13 @@
       var w3 = aTri * sgn;
       area += w3;
       cx += cen[0] * w3; cy += cen[1] * w3; cz += cen[2] * w3;
-      var un = mul(cr2, 1 / (aTri * 2));
+      var un = mul(cr2, 1 / (aTri * 2));   // 单位几何法线：渲染时这个三角形的正面朝向
+      triN.push(un[0], un[1], un[2]);      // 顺手存下来，给下面定顶点法线符号用
       nx += un[0] * w3; ny += un[1] * w3; nz += un[2] * w3;
       for (var w = 0; w < 3; w++) {
         pos.push(P[w][0], P[w][1], P[w][2]);
         verts.push(P[w]);
+        uvs.push(tri[w]);
         for (var d2 = 0; d2 < 3; d2++) {
           if (P[w][d2] < bmin[d2]) bmin[d2] = P[w][d2];
           if (P[w][d2] > bmax[d2]) bmax[d2] = P[w][d2];
@@ -1140,6 +1251,38 @@
       normal = nrm([nx, ny, nz]);
     }
     if (!same) normal = mul(normal, -1);
+
+    /* 逐顶点法线：曲面用解析法向，渲染端就能做 Gouraud 插值。
+     * 只给面法线的话，细分得再密也是一块块小平面（每块一个色），
+     * 「网格更细」在观感上等于没有收益 —— 这两件事必须一起做。 */
+    var nrms = [];
+    if (surf.kind === 'Plane' || !surf.normalAt) {
+      for (var nv = 0; nv < verts.length; nv++) nrms.push(normal[0], normal[1], normal[2]);
+    } else {
+      /* 符号按「这个顶点所在的那个三角形」的几何法线定，不按整面定。
+       * 三种写法都试过，前两种在真实件上都会翻车：
+       *   ① 逐顶点跟面法线 normal 比 —— 圆柱上 normal 只是质心那一个角度的
+       *      径向，绕半圈点积自然为负，会把一半孔壁的法线翻进材料里；
+       *   ② 整面投票定一个符号 —— B 样条片体参数域折叠时，同一个面里三角形
+       *      缠绕正负各半（实测 4518 面件有 1225 个这样的面），投票必输一半。
+       * 三角形几何法线（triN，上面循环顺手存的单位叉积）就是渲染时真正的正面
+       * 朝向，逐顶点对齐它，dot(N, 正面) 恒 >= 0，绝不会出现背光黑面。
+       * 只改法线、不动顶点顺序：换顺序会改 area 的 uv 符号权重，进而改 gAAG
+       * 面属性与网络判定结果。法线值本身仍由 nCache 复用，平滑性不受影响。 */
+      var nCache = new Map();          // 缓存「未翻转」的解析法向，符号在输出时再定
+      for (var nv2 = 0; nv2 < uvs.length; nv2++) {
+        var uvq = uvs[nv2], nk = uvq[0] + '|' + uvq[1];
+        var nnv = nCache.get(nk);
+        if (!nnv) {
+          nnv = surf.normalAt(uvq[0], uvq[1]) || normal;
+          nCache.set(nk, nnv);
+        }
+        var gi = Math.floor(nv2 / 3) * 3, sg = 1;
+        if (gi + 2 < triN.length &&
+            nnv[0] * triN[gi] + nnv[1] * triN[gi + 1] + nnv[2] * triN[gi + 2] < 0) sg = -1;
+        nrms.push(nnv[0] * sg, nnv[1] * sg, nnv[2] * sg);
+      }
+    }
 
     /* 环向校正：凸凹判定要「材料在左」的走向。
      * 面 A 的裁剪域就是它的材料面片。沿边界走一圈时「材料在左」= 相对外法向逆时针；
@@ -1180,7 +1323,7 @@
 
     return {
       step_id: fid,
-      pos: pos, verts: verts, area: area, tris: count,
+      pos: pos, nrm: nrms, verts: verts, area: area, tris: count,
       centroid: ctr, bbox_min: bmin, bbox_max: bmax,
       normal: normal,
       radius: (surf.kind === 'Cylinder' || surf.kind === 'Cone') ? Math.abs(surf.radius) : null,
@@ -1492,7 +1635,29 @@
     var faceIds = collectFaceIds(doc);
     if (!faceIds.length) throw new Error('没有找到 B-Rep 面（ADVANCED_FACE）。该文件可能只含曲面/线框，或不是 AP203/214/242 实体模型');
 
-    var faces = [], allPos = [], allFid = [];
+    /* ---- 细分容差 ----
+     * 主判据是弦高（sagitta）：曲面偏离直弦多少算「看得出是折的」。
+     * 解析曲面（圆柱/圆锥/球/环）本来就被曲线采样切得够密 —— 96 段的孔壁
+     * 在 60 mm 的件上弦高只有 3 µm，再细分纯属浪费；真正需要补的是
+     * B 样条：它一个面可能就跨大半张蒙皮，内部一个采样点都没有。
+     *
+     * 边长上限放得很宽（对角线/30），只用来切掉极端的细长条：
+     * 收紧要到 /110 的话，圆柱面那条 10 mm 高的母线会被 1→4 均匀
+     * 细分 4 次，短边跟着一起碎，一个孔壁能烧掉 12000 个三角形。 */
+    var scale0 = estimateScale(doc);
+    var tq = (opts.tess === undefined || opts.tess === null) ? 1 : +opts.tess;
+    if (!isFinite(tq) || tq < 0) tq = 1;
+    /* tq=0 关细分；tq=2 是「精细」档（容差减半），给单个零件的汇报截图用 */
+    ctx.tol = tq > 0 ? scale0 / (1600 * tq) : Infinity;
+    /* maxLen 只做极端保护（半个模型对角线）：Gouraud 下细长三角形不会露馅，
+     * 拿它当「网格要均匀」的硬指标反而会把圆柱母线切碎，白白多出十倍三角形。 */
+    ctx.maxLen = tq > 0 ? scale0 * 0.5 : Infinity;
+    /* 单面上限不能卡太低：7~8 个面的小件里，孔壁一张面就能吃掉两三千个三角形，
+     * 预算封在 2400 的话 tol/maxLen 再怎么调都不生效（实测 tess=1/2/3 结果完全一样）。 */
+    ctx.faceBudget = Math.max(120, Math.min(12000, Math.round(4000000 * Math.max(1, Math.min(2, tq)) / Math.max(1, faceIds.length))));
+
+
+    var faces = [], allPos = [], allNrm = [], allFid = [];
     // 平面优先：180° 弧的方向裁决由平面面给出，再让曲面面复用（按边缓存）
     var planarFirst = [], others = [];
     for (var oi = 0; oi < faceIds.length; oi++) {
@@ -1512,6 +1677,9 @@
         allPos.push(rec.pos[k], rec.pos[k + 1], rec.pos[k + 2],
                     rec.pos[k + 3], rec.pos[k + 4], rec.pos[k + 5],
                     rec.pos[k + 6], rec.pos[k + 7], rec.pos[k + 8]);
+        allNrm.push(rec.nrm[k], rec.nrm[k + 1], rec.nrm[k + 2],
+                    rec.nrm[k + 3], rec.nrm[k + 4], rec.nrm[k + 5],
+                    rec.nrm[k + 6], rec.nrm[k + 7], rec.nrm[k + 8]);
         allFid.push(rec.id);
       }
     }
@@ -1576,6 +1744,10 @@
     }
     var faceids = new Int32Array(allFid.length);
     for (var fi = 0; fi < allFid.length; fi++) faceids[fi] = allFid[fi];
+
+    /* 法线是方向，不做居中/缩放（归一化只动位置）。 */
+    var normals = new Float32Array(allNrm.length);
+    for (var wn = 0; wn < allNrm.length; wn++) normals[wn] = allNrm[wn];
 
     /* ---- 面属性（归一化空间）---- */
     // 调试出口要在归一化「之前」留快照：下面的 forEach 会就地改写 area/centroid/verts/radius，
@@ -1661,6 +1833,7 @@
        * 光那一个数组就是 7300 万个元素：几十秒时间 + 600 MB 堆，纯属白烧。
        * 渲染端 decodePart 会复制一份再做 Z-up→Y-up，不会二次变换。 */
       _pos: positions,
+      _nrm: normals,
       faceids: Array.prototype.slice.call(faceids),
       imported: true,
       nn: nn,

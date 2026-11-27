@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>AAGNet 加工特征识别 · 演示</title>
+<link rel="icon" href="data:," />
 <style>
 :root{
   --bg:#070b14; --bg2:#0b1220; --panel:#0e1626; --panel2:#121c2e;
@@ -585,6 +586,7 @@ window.addEventListener('error', function(e){
 
   const $ = id => document.getElementById(id);
   const fmt = (n,d=1)=> Number(n).toFixed(d);
+  window.__S = S;                    // 调试出口：控制台/自动化脚本核对状态用
 
   /* ================================================================== part switching */
   let impCount = 0;
@@ -728,15 +730,26 @@ window.addEventListener('error', function(e){
     const fid = new Int32Array(tri);
     for (let i=0;i<tri;i++) fid[i] = p.faceids[i];
     const nrm = new Float32Array(pos.length);
-    for (let t=0;t<tri;t++){
-      const o = t*9;
-      const ax=pos[o],ay=pos[o+1],az=pos[o+2];
-      const bx=pos[o+3],by=pos[o+4],bz=pos[o+5];
-      const cx=pos[o+6],cy=pos[o+7],cz=pos[o+8];
-      const ux=bx-ax, uy=by-ay, uz=bz-az, vx=cx-ax, vy=cy-ay, vz=cz-az;
-      let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
-      const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
-      for (let k=0;k<3;k++){ nrm[o+k*3]=nx; nrm[o+k*3+1]=ny; nrm[o+k*3+2]=nz; }
+    /* 导入件带逐顶点解析法线（step_import 在曲面参数域上求的），
+     * 只有演示样例才退回按三角形叉积。叉积是「一个三角形一个色」的平面着色，
+     * 曲面看上去全是棱面 —— 光补细分不换法线，观感不会有任何改善。 */
+    if (p._nrm && p._nrm.length === pos.length){
+      for (let v=0; v<pos.length; v+=3){
+        nrm[v]   = p._nrm[v];
+        nrm[v+1] = p._nrm[v+2];      // 与位置同一个 Z-up -> Y-up
+        nrm[v+2] = -p._nrm[v+1];
+      }
+    } else {
+      for (let t=0;t<tri;t++){
+        const o = t*9;
+        const ax=pos[o],ay=pos[o+1],az=pos[o+2];
+        const bx=pos[o+3],by=pos[o+4],bz=pos[o+5];
+        const cx=pos[o+6],cy=pos[o+7],cz=pos[o+8];
+        const ux=bx-ax, uy=by-ay, uz=bz-az, vx=cx-ax, vy=cy-ay, vz=cz-az;
+        let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
+        const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
+        for (let k=0;k<3;k++){ nrm[o+k*3]=nx; nrm[o+k*3+1]=ny; nrm[o+k*3+2]=nz; }
+      }
     }
     // face -> instance index
     const faceById = new Map(p.faces.map(f=>[f.id,f]));
@@ -847,12 +860,13 @@ window.addEventListener('error', function(e){
         col += vec3(0.02,0.05,0.07) * rim;
         float a = 1.0;
         if (uPass > 0.5) {
-          /* 深色界面上单纯把 alpha 压到 0.15，混合结果就是背景黑，等于消失。
-           * 所以先把颜色抬到一个固定的灰蓝基准（保留一点法线明暗），
-           * 再用 alpha 做「透过去看」——形状和体积感都在，但完全不抢主色。 */
-          float g = dot(col, vec3(0.33, 0.38, 0.45));
-          vec3 ghost = vec3(0.40, 0.47, 0.57) * (0.55 + 0.9 * g);
-          col = mix(col, ghost, 0.78);
+          /* 亮度不能乘原色：曲面背光面本色接近 0，乘出来的灰壳照样是黑。
+           * 用固定底光 + 一点法线明暗，暗面和亮面都留得住形体。
+           * 透明度交给 uBg，混合只发生一次 —— 画布现在是不透明底，
+           * 不会像之前那样和页面背景再混一遍、把 0.5 衰减成 0.2。 */
+          float lam = max(dot(N, L1), 0.0);
+          vec3 ghost = vec3(0.27, 0.32, 0.41) * (0.72 + 0.46 * lam);
+          col = mix(col, ghost, 0.88);
           a = uBg;
         }
         if (vS > 0.5) {
@@ -1206,7 +1220,10 @@ window.addEventListener('error', function(e){
   function draw(pulse){
     const gl = GL.gl; if(!gl||!S.part) return;
     const cv=$('gl');
-    gl.clearColor(0,0,0,0); gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+    /* 画布必须有不透明底：透明画布 + CSS 背景的话，第二趟淡出的 alpha
+     * 会跟页面背景再合成一次，「半透明」实际被衰减两遍，一选中就全黑。 */
+    gl.clearColor(0.039, 0.071, 0.125, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE);
     gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -2184,7 +2201,9 @@ window.addEventListener('error', function(e){
         + '解析实体表 · 三角化 B-Rep 面 · 组 gAAG · 网络前向 …<br>' +
         '<span style="opacity:.7">全部在本机浏览器内完成，文件不会上传</span>');
       await raf2();
-      part = window.AAG_STEP.buildPart(text, file.name);
+      /* ?tess=0 关掉曲面细分、?tess=2 加密一倍：留给 A/B 对比和低配机器兜底 */
+      const tq = new URLSearchParams(location.search).get('tess');
+      part = window.AAG_STEP.buildPart(text, file.name, { tess: tq === null ? 1 : Number(tq) });
     } catch (e){
       showImp('导入失败', escapeHtml(e && e.message ? e.message : String(e)) +
         '<br><span style="opacity:.65">若来自 CATIA / NX / SolidWorks，导出时请选「AP214 或 AP242 实体」文本 STEP；' +
