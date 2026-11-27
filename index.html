@@ -740,15 +740,42 @@ window.addEventListener('error', function(e){
         nrm[v+2] = -p._nrm[v+1];
       }
     } else {
+      /* 演示样例是预烘三角形，没有参数域，求不了解析法向。
+       * 「按三角形叉积给三个顶点同一个法线」是 flat shading：曲面被切成
+       * 几十个细长三角形时，每个三角形一个明暗，画面上就是一片细密竖条纹
+       * —— 很像 Z-Fight，其实是法线问题，跟深度缓冲无关。
+       * 改成在**同一个面内**按共享顶点聚合三角形法线（叉积长度 = 2×面积，
+       * 天然带面积权重）；面与面之间不共享，所以台阶/棱边仍然锐利。 */
+      const Q = 1e4;
+      const vk = o => Math.round(pos[o]*Q)+','+Math.round(pos[o+1]*Q)+','+Math.round(pos[o+2]*Q);
+      const acc = new Map(), ref = new Map();
       for (let t=0;t<tri;t++){
-        const o = t*9;
+        const o=t*9, f=fid[t];
         const ax=pos[o],ay=pos[o+1],az=pos[o+2];
         const bx=pos[o+3],by=pos[o+4],bz=pos[o+5];
         const cx=pos[o+6],cy=pos[o+7],cz=pos[o+8];
         const ux=bx-ax, uy=by-ay, uz=bz-az, vx=cx-ax, vy=cy-ay, vz=cz-az;
         let nx=uy*vz-uz*vy, ny=uz*vx-ux*vz, nz=ux*vy-uy*vx;
-        const l=Math.hypot(nx,ny,nz)||1; nx/=l; ny/=l; nz/=l;
-        for (let k=0;k<3;k++){ nrm[o+k*3]=nx; nrm[o+k*3+1]=ny; nrm[o+k*3+2]=nz; }
+        /* 同一个面里三角形缠绕若不一致，直接累加会互相抵消：
+         * 用该面第一个三角形的法线当参考，反向的先翻正。 */
+        let r = ref.get(f);
+        if (!r){ const l=Math.hypot(nx,ny,nz)||1; r=[nx/l,ny/l,nz/l]; ref.set(f,r); }
+        if (nx*r[0]+ny*r[1]+nz*r[2] < 0){ nx=-nx; ny=-ny; nz=-nz; }
+        for (let k=0;k<3;k++){
+          const kk = f+'|'+vk(o+k*3);
+          let a = acc.get(kk);
+          if (!a){ a=[0,0,0]; acc.set(kk,a); }
+          a[0]+=nx; a[1]+=ny; a[2]+=nz;
+        }
+      }
+      for (let t=0;t<tri;t++){
+        const o=t*9, f=fid[t];
+        for (let k=0;k<3;k++){
+          const a = acc.get(f+'|'+vk(o+k*3));
+          let x=a[0], y=a[1], z=a[2], l=Math.hypot(x,y,z);
+          if (l < 1e-12){ const r=ref.get(f)||[0,0,1]; x=r[0]; y=r[1]; z=r[2]; l=1; }
+          nrm[o+k*3]=x/l; nrm[o+k*3+1]=y/l; nrm[o+k*3+2]=z/l;
+        }
       }
     }
     // face -> instance index
@@ -786,7 +813,15 @@ window.addEventListener('error', function(e){
     }
     flushFace();
     const edges = new Float32Array(lines.length);
-    return {pos, nrm, fid, tri, faceById, instOfFace, edges};
+    /* 归一化后模型中心就在原点，最大 |p| 即包围球半径。
+     * mvp() 拿它把 near/far 贴着模型给，别把深度精度浪费在空处。 */
+    let r2 = 0;
+    for (let v=0; v<pos.length; v+=3){
+      const s = pos[v]*pos[v] + pos[v+1]*pos[v+1] + pos[v+2]*pos[v+2];
+      if (s > r2) r2 = s;
+    }
+    const radius = Math.sqrt(r2) || 0.9;
+    return {pos, nrm, fid, tri, faceById, instOfFace, edges, radius};
   }
 
   function buildFaceMap(){
@@ -877,8 +912,18 @@ window.addEventListener('error', function(e){
         }
         gl_FragColor = vec4(col, a);
       }`;
+    /* 边线正好落在三角面边界上，与面完全共面。以前靠给「面」加 polygonOffset
+     * 把面推远来让线浮出来，但那样前景 / 淡出两趟的深度基准就不一致了：
+     * 同一层级、共面的面互相穿插（Z-Fight），淡出壳还会反过来盖住高亮面。
+     * 现在面一律不加 offset，改成只在线框的 clip z 上减一个固定偏置，
+     * 把线往相机方向抬一点点，不碰任何面的深度。 */
     const pv = `
-      attribute vec3 aPos; uniform mat4 uMVP; void main(){ gl_Position = uMVP*vec4(aPos,1.0); }`;
+      attribute vec3 aPos; uniform mat4 uMVP; uniform float uDepthBias;
+      void main(){
+        vec4 c = uMVP*vec4(aPos,1.0);
+        c.z -= uDepthBias * c.w;
+        gl_Position = c;
+      }`;
     const pf = `
       precision mediump float; void main(){ gl_FragColor = vec4(1.0,1.0,1.0,1.0); }`;
     const pidvs = `
@@ -1211,7 +1256,18 @@ window.addEventListener('error', function(e){
   function mvp(){
     const cv=$('gl'), c=GL.cam, b=camBasis();
     const view=lookAt(camEye(), c.target, b.up);
-    const proj=persp(c.fov, cv.width/cv.height, c.dist*0.05, c.dist*8);
+    /* 深度范围贴着模型包围球给，而不是 dist 的固定倍数。
+     * 原来 near=dist*0.05 / far=dist*8（比值 160），模型只占中间一小段，
+     * 深度精度大量浪费在空处，共面/近共面的面片更容易挤到一起打架；
+     * 放大到模型内部时还会被 near 平面切开。现在比值约 3，
+     * 且拾取（pickAt）与显示用同一套投影，ID 缓冲不会对不上。 */
+    const D = S.part && S.part._decoded;
+    const R = (D && D.radius) || 0.9;
+    const eye = camEye();
+    const d = Math.hypot(eye[0], eye[1], eye[2]);
+    const near = Math.max(1e-3, d - R*1.5);
+    const far  = Math.max(near + 1e-3, d + R*1.5);
+    const proj=persp(c.fov, cv.width/cv.height, near, far);
     // arrays are column-major: mul(b,a) yields column-major (a*b)
     return mul(view, proj);
   }
@@ -1243,12 +1299,15 @@ window.addEventListener('error', function(e){
     const uPass = gl.getUniformLocation(P,'uPass');
     const triN = S.part._decoded.tri*3;
 
-    /* pass 1：前景（不透明）。先画，把深度立住。 */
+    /* pass 1：前景（不透明）。先画，把深度立住。
+     * 两趟 pass 必须用同一套深度基准 —— 不能只给这一趟加 polygonOffset：
+     * 前景面被推远、淡出面留在原深度，共面或近共面的面就会互相穿插，
+     * 淡出壳还会盖住本该高亮的面，看起来就是 Z-Fight / 深度错乱。
+     * 共面时 pass1 先写深度，pass2 深度相同被 LESS 剔除，前景稳定胜出。
+     * 线框要浮出来交给 pv 里的 uDepthBias，跟面的深度无关。 */
     gl.uniform1f(uPass, 0.0);
     gl.depthMask(true);
-    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(1.2, 1.6);
     gl.drawArrays(gl.TRIANGLES, 0, triN);
-    gl.disable(gl.POLYGON_OFFSET_FILL);
 
     /* pass 2：背景（淡出）。没有淡出对象就整段跳过 ——
      * 4518 面的件有 152 万个三角形，这一趟白跑等于白白多一倍顶点处理。 */
@@ -1265,6 +1324,7 @@ window.addEventListener('error', function(e){
       gl.uniformMatrix4fv(gl.getUniformLocation(LP,'uMVP'), false, new Float32Array(M));
       const dark = S.focused ? 0.020 : 0.040;      // 有焦点时压暗，别和前景抢
       gl.uniform3f(gl.getUniformLocation(LP,'uColor'), dark, dark*1.5, dark*2.2);
+      gl.uniform1f(gl.getUniformLocation(LP,'uDepthBias'), 0.0016);
       gl.drawArrays(gl.LINES, 0, GL.rand.lineCount);
     }
     // selection outline
@@ -1273,6 +1333,7 @@ window.addEventListener('error', function(e){
       bindAttr(gl.getAttribLocation(LP,'aPos'), GL.buf.selLine, 3);
       gl.uniformMatrix4fv(gl.getUniformLocation(LP,'uMVP'), false, new Float32Array(M));
       gl.uniform3f(gl.getUniformLocation(LP,'uColor'), 0.28, 0.93, 1.0);
+      gl.uniform1f(gl.getUniformLocation(LP,'uDepthBias'), 0.0030);  // 选中轮廓压在特征边之前
       gl.drawArrays(gl.LINES, 0, GL.rand.selCount);
     }
     gl.disable(gl.CULL_FACE);
