@@ -203,8 +203,12 @@
       ent.id = stmts[i].id;
       e.set(ent.id, ent);
       all.push(ent.id);
+      /* 注意去重：普通实体的 parts[0].name 和 ent.type 是同一个名字，
+       * 不去重会让 byType 里每条实体登记两次（面数、形态统计都会翻倍）。 */
       var names = [ent.type];
-      if (ent.parts) for (var p = 0; p < ent.parts.length; p++) names.push(ent.parts[p].name);
+      if (ent.parts) for (var p = 0; p < ent.parts.length; p++) {
+        if (ent.parts[p].name !== ent.type) names.push(ent.parts[p].name);
+      }
       for (var q = 0; q < names.length; q++) {
         var n2 = names[q];
         if (!byType.has(n2)) byType.set(n2, []);
@@ -390,8 +394,21 @@
     return mid;
   }
 
-  function basisFuns(i, u, p, U) {
-    var N = new Array(p + 1), left = new Array(p + 1), right = new Array(p + 1);
+  /* 基函数求值：热点中的热点。曲面 p(u,v) 每算一个点要调两次，牛顿每步调五次，
+   * 45 MB 片体上合计上亿次。原实现每次 new 三个数组 —— 光分配和 GC 就占掉大半时间。
+   * 改成模块级暂存（按需扩容、不跨调用保留语义），两套缓冲供 u/v 同时使用。 */
+  var BF_N = [null, null], BF_L = [null, null], BF_R = [null, null], BF_SIZE = 0;
+  function basisBuf(slot, p) {
+    if (p + 1 > BF_SIZE) {
+      BF_SIZE = p + 1 + 8;
+      BF_N[0] = new Float64Array(BF_SIZE); BF_L[0] = new Float64Array(BF_SIZE); BF_R[0] = new Float64Array(BF_SIZE);
+      BF_N[1] = new Float64Array(BF_SIZE); BF_L[1] = new Float64Array(BF_SIZE); BF_R[1] = new Float64Array(BF_SIZE);
+    }
+    return slot;
+  }
+  function basisFuns(i, u, p, U, slot) {
+    var s = basisBuf(slot || 0, p);
+    var N = BF_N[s], left = BF_L[s], right = BF_R[s];
     for (var z = 0; z <= p; z++) { N[z] = 0; left[z] = 0; right[z] = 0; }
     N[0] = 1;
     for (var j = 1; j <= p; j++) {
@@ -448,11 +465,25 @@
     var V = expandKnots(knt[1], knt[3], pv, nv);
     var u0 = U[pu], u1 = U[nu], v0 = V[pv], v1 = V[nv];
 
+    var lastIu = -1, lastIv = -1;
+    function spanU(u) {
+      var i = lastIu;
+      if (i >= pu && i < nu && U[i] <= u && u < U[i + 1]) return i;
+      lastIu = findSpan(U, pu, nu - 1, u);
+      return lastIu;
+    }
+    function spanV(vv) {
+      var i = lastIv;
+      if (i >= pv && i < nv && V[i] <= vv && vv < V[i + 1]) return i;
+      lastIv = findSpan(V, pv, nv - 1, vv);
+      return lastIv;
+    }
+
     function pt(u, vv) {
       u = clamp(u, u0, u1);
       vv = clamp(vv, v0, v1);
-      var iu = findSpan(U, pu, nu - 1, u), iv = findSpan(V, pv, nv - 1, vv);
-      var Nu = basisFuns(iu, u, pu, U), Nv = basisFuns(iv, vv, pv, V);
+      var iu = spanU(u), iv = spanV(vv);
+      var Nu = basisFuns(iu, u, pu, U, 0), Nv = basisFuns(iv, vv, pv, V, 1);
       var sx = 0, sy = 0, sz = 0, sw = 0;
       for (var a2 = 0; a2 <= pu; a2++) {
         for (var b2 = 0; b2 <= pv; b2++) {
@@ -468,30 +499,38 @@
       return [sx / sw, sy / sw, sz / sw];
     }
 
-    function uvOf(p) {
-      var best = [u0, v0], bd = Infinity;
-      var NU = 20, NV = 20;
-      for (var a3 = 0; a3 <= NU; a3++) {
-        var uu = u0 + (u1 - u0) * a3 / NU;
-        for (var b3 = 0; b3 <= NV; b3++) {
-          var vv = v0 + (v1 - v0) * b3 / NV;
-          var S = pt(uu, vv);
-          if (!S) continue;
-          var d2 = (S[0] - p[0]) * (S[0] - p[0]) + (S[1] - p[1]) * (S[1] - p[1]) + (S[2] - p[2]) * (S[2] - p[2]);
-          if (d2 < bd) { bd = d2; best = [uu, vv]; }
-        }
+    /* 逆映射（3D → uv）。整条链上最贵的一步：每个环点都要算一次。
+     * 旧实现每次都在 21×21 参数网格上做全局粗搜（单点 441 次曲面求值），
+     * 可这张网格对同一张曲面上的**所有点**是同一张 —— 每个点重算一遍纯属浪费。
+     * 45 MB 的 CATIA 片体（4518 面 / 124 万个环点）因此要跑 173 s。
+     * 现在按面缓存一次粗搜表（441 次求值），每个点只做「扫表找最近格点 + 牛顿」，
+     * 起点与旧实现逐字相同，所以结果只差浮点噪声，不是换了算法。 */
+    var scaleR = 1;
+    for (var gi = 0; gi < nu; gi++) {
+      for (var gj = 0; gj < nv; gj++) {
+        var gp = grid[gi][gj];
+        if (gp) scaleR = Math.max(scaleR, Math.abs(gp[0]), Math.abs(gp[1]), Math.abs(gp[2]));
       }
-      var u = best[0], vv = best[1];
-      for (var it = 0; it < 6; it++) {
+    }
+    var TOL2 = Math.pow(scaleR * 1e-10, 2);
+
+    function newton(u, vv, p, iters) {
+      for (var it = 0; it < iters; it++) {
         var S0 = pt(u, vv);
-        if (!S0) break;
-        var f = sub(S0, p);
+        if (!S0) return null;
+        var fx = S0[0] - p[0], fy = S0[1] - p[1], fz = S0[2] - p[2];
+        var e2 = fx * fx + fy * fy + fz * fz;
+        if (e2 <= TOL2) return { uv: [u, vv], err2: e2 };    // 已收敛，别再白算导数
         var du = (u1 - u0) * 1e-3 + 1e-9, dv = (v1 - v0) * 1e-3 + 1e-9;
-        var Su = sub(pt(u + du, vv) || S0, pt(u - du, vv) || S0);
-        var Sv = sub(pt(u, vv + dv) || S0, pt(u, vv - dv) || S0);
-        Su = mul(Su, 1 / (2 * du)); Sv = mul(Sv, 1 / (2 * dv));
-        var A11 = dot(Su, Su), A12 = dot(Su, Sv), A22 = dot(Sv, Sv);
-        var b1 = -dot(Su, f), b2 = -dot(Sv, f);
+        var Pu1 = pt(u + du, vv) || S0, Pu0 = pt(u - du, vv) || S0;
+        var Pv1 = pt(u, vv + dv) || S0, Pv0 = pt(u, vv - dv) || S0;
+        var Su = [(Pu1[0] - Pu0[0]) / (2 * du), (Pu1[1] - Pu0[1]) / (2 * du), (Pu1[2] - Pu0[2]) / (2 * du)];
+        var Sv = [(Pv1[0] - Pv0[0]) / (2 * dv), (Pv1[1] - Pv0[1]) / (2 * dv), (Pv1[2] - Pv0[2]) / (2 * dv)];
+        var A11 = Su[0] * Su[0] + Su[1] * Su[1] + Su[2] * Su[2];
+        var A12 = Su[0] * Sv[0] + Su[1] * Sv[1] + Su[2] * Sv[2];
+        var A22 = Sv[0] * Sv[0] + Sv[1] * Sv[1] + Sv[2] * Sv[2];
+        var b1 = -(Su[0] * fx + Su[1] * fy + Su[2] * fz);
+        var b2 = -(Sv[0] * fx + Sv[1] * fy + Sv[2] * fz);
         var det = A11 * A22 - A12 * A12;
         if (Math.abs(det) < 1e-16) break;
         var dU = (b1 * A22 - A12 * b2) / det, dV = (A11 * b2 - A12 * b1) / det;
@@ -499,7 +538,40 @@
         vv = clamp(vv + dV, v0, v1);
         if (Math.abs(dU) < 1e-9 && Math.abs(dV) < 1e-9) break;
       }
-      return [u, vv];
+      var Se = pt(u, vv);
+      if (!Se) return null;
+      var ex = Se[0] - p[0], ey = Se[1] - p[1], ez = Se[2] - p[2];
+      return { uv: [u, vv], err2: ex * ex + ey * ey + ez * ez };
+    }
+
+    /* 粗搜表：参数域 21×21 采样，懒建，一张面只建一次 */
+    var coarse = null;
+    function coarseGrid() {
+      if (coarse) return coarse;
+      var NU = 20, NV = 20, arr = [];
+      for (var a3 = 0; a3 <= NU; a3++) {
+        var uu = u0 + (u1 - u0) * a3 / NU;
+        for (var b3 = 0; b3 <= NV; b3++) {
+          var vv = v0 + (v1 - v0) * b3 / NV;
+          var S = pt(uu, vv);
+          if (S) arr.push(uu, vv, S[0], S[1], S[2]);
+        }
+      }
+      coarse = arr;
+      return coarse;
+    }
+
+    function uvOf(p) {
+      var g = coarseGrid(), best = 0, bd = Infinity;
+      /* 扫表：每格一次距离比较（不调曲面），比重算 441 次求值便宜两个数量级 */
+      for (var k = 0; k < g.length; k += 5) {
+        var dx = g[k + 2] - p[0], dy = g[k + 3] - p[1], dz = g[k + 4] - p[2];
+        var d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bd) { bd = d2; best = k; }
+      }
+      var cu = g[best], cv = g[best + 1];
+      var r = newton(cu, cv, p, 6);
+      return r ? r.uv : [cu, cv];
     }
 
     function normalAt(u, vv) {
@@ -816,15 +888,15 @@
     return s * 0.5;
   }
 
-  function toUV(surf, pts) {
-    var uv = [], pu = null, pv = null;
+  function toUV(surf, pts, seed0) {
+    var uv = [], pu = null, pv = null, seed = seed0 || null;
     for (var i = 0; i < pts.length; i++) {
-      var r = surf.uvOf(pts[i]);
+      var r = surf.uvOf(pts[i], seed);
       if (!r || !isFinite(r[0]) || !isFinite(r[1])) return null;
       var u = r[0], v = r[1];
       if (surf.periodU && pu !== null) u = pu + wrapPi(u - pu);
       if (surf.periodV && pv !== null) v = pv + wrapPi(v - pv);
-      uv.push([u, v]); pu = u; pv = v;
+      uv.push([u, v]); pu = u; pv = v; seed = [u, v];
     }
     return uv;
   }
@@ -893,10 +965,17 @@
         if (qa < bestQ - 1e-12) continue;
         if (qa <= bestQ + 1e-12 && ar >= bestA) continue;
         var ok = true;
+        /* 包含判定前先过包围盒：绝大多数顶点远离这只耳朵，跳过它们不改结果（triIn 本来就返回 false） */
+        var bx0 = a[0] < b[0] ? (a[0] < c[0] ? a[0] : c[0]) : (b[0] < c[0] ? b[0] : c[0]);
+        var bx1 = a[0] > b[0] ? (a[0] > c[0] ? a[0] : c[0]) : (b[0] > c[0] ? b[0] : c[0]);
+        var by0 = a[1] < b[1] ? (a[1] < c[1] ? a[1] : c[1]) : (b[1] < c[1] ? b[1] : c[1]);
+        var by1 = a[1] > b[1] ? (a[1] > c[1] ? a[1] : c[1]) : (b[1] > c[1] ? b[1] : c[1]);
         for (var j = 0; j < m; j++) {
           var mm = idx[j];
           if (mm === i0 || mm === i1 || mm === i2) continue;
-          if (triIn(a, b, c, poly[mm])) { ok = false; break; }
+          var qq = poly[mm];
+          if (qq[0] < bx0 || qq[0] > bx1 || qq[1] < by0 || qq[1] > by1) continue;
+          if (triIn(a, b, c, qq)) { ok = false; break; }
         }
         if (!ok) continue;
         bestK = k; bestQ = qa; bestA = ar;
@@ -979,10 +1058,11 @@
       ctx.warn('有 ' + 1 + ' 个面按平面近似（原始曲面类型未支持）');
     }
 
-    var loopsUV = [];
+    var loopsUV = [], seedUV = null;
     for (var r = 0; r < raw.length; r++) {
-      var uv = toUV(surf, raw[r].pts);
+      var uv = toUV(surf, raw[r].pts, seedUV);
       if (!uv || uv.length < 3) continue;
+      seedUV = uv[0];              // 下一个环的第一点从本环起点起跳：孔与外环通常挨着
       loopsUV.push({ uv: uv, outer: raw[r].outer });
     }
     if (!loopsUV.length) { ctx.skip('面 #' + fid + '：参数域映射失败'); return null; }
@@ -1149,6 +1229,26 @@
       }
     }
     return 1;
+  }
+
+  /* 面类型只用于显示与规则命中判断；AAGNet 用的是 kind 原值，两者不要混 */
+  function kindLabel(k) {
+    if (k === 'Plane' || k === 'Cylinder' || k === 'Cone' || k === 'Sphere' || k === 'Torus') return k;
+    if (k === 'BSpline') return 'BSpline';
+    return 'Other';
+  }
+
+  /* 模型形态：实体（MANIFOLD_SOLID_BREP / CLOSED_SHELL）还是片体（SHELL_BASED_SURFACE_MODEL）。
+   * CATIA 的复材蒙皮、曲面设计件经常是纯片体，这类件没有「实体内部」，
+   * 机加工特征识别（孔/腔/台阶）本身就不成立，AAGNet 也不该硬跑。 */
+  function modelShape(doc) {
+    function n(t) { var a = doc.d.byType.get(t); return a ? a.length : 0; }
+    return {
+      solids: n('MANIFOLD_SOLID_BREP'),
+      closedShells: n('CLOSED_SHELL'),
+      surfaceModels: n('SHELL_BASED_SURFACE_MODEL'),
+      openShells: n('OPEN_SHELL')
+    };
   }
 
   function collectFaceIds(doc) {
@@ -1433,7 +1533,28 @@
     /* ---- AAGNet 推理（浏览器内；没加载模型或失败就退回规则识别，不影响导入）---- */
     var nn = null;
     var GB = (typeof window !== 'undefined') ? window : null;
-    if (GB && GB.AAG_MODEL && GB.AAG_MODEL.ready() && GB.AAG_REC && GB.AAG_REC.recognize) {
+    /* 网络只在「机加工实体」上跑。片体（复材蒙皮、曲面件）没有实体内部，
+     * 孔/腔/台阶的定义都不成立；自由曲面占比过高时特征向量也整体落在训练分布之外。
+     * 这两种情况硬跑会吐出一堆看起来很像结果的垃圾（这个 46 MB 的 CATIA 蒙皮上给了 44 个
+     * 假实例、1789 个面被标成「圆角」），不如明确说「跳过」并给出原因。 */
+    var shape = modelShape(doc);
+    var analytic = 0;
+    for (var ai2 = 0; ai2 < faces.length; ai2++) {
+      var kk = faces[ai2].kind;
+      if (kk === 'Plane' || kk === 'Cylinder' || kk === 'Cone' || kk === 'Sphere' || kk === 'Torus') analytic++;
+    }
+    var analyticShare = faces.length ? analytic / faces.length : 0;
+    var skipNet = '';
+    if (!shape.solids && !shape.closedShells) {
+      skipNet = '该文件是曲面片体（' + shape.surfaceModels + ' 个 SHELL_BASED_SURFACE_MODEL、0 个封闭实体），'
+              + '没有实体内部，孔/腔/台阶不成立';
+    } else if (analyticShare < 0.2) {
+      skipNet = '平面/圆柱/圆锥/球/环面只占 ' + Math.round(analyticShare * 100) + '%，其余是自由曲面，'
+              + '超出 AAGNet 的训练域';
+    }
+    if (skipNet) {
+      nn = { skipped: true, reason: skipNet, N: faces.length };
+    } else if (GB && GB.AAG_MODEL && GB.AAG_MODEL.ready() && GB.AAG_REC && GB.AAG_REC.recognize) {
       try {
         nn = GB.AAG_REC.recognize(faces, {
           center: center,
@@ -1476,7 +1597,7 @@
       f.area = f.area / (diag * diag);
       if (f.radius) f.radius = f.radius / diag;
       if (f.axis_pt) f.axis_pt = [(f.axis_pt[0] - center[0]) / diag, (f.axis_pt[1] - center[1]) / diag, (f.axis_pt[2] - center[2]) / diag];
-      f.type = f.kind === 'Plane' ? 'Plane' : (f.kind === 'Cylinder' ? 'Cylinder' : 'Freeform/Cone');
+      f.type = kindLabel(f.kind);
     });
 
     /* ---- 邻接（按共享边的端点键）---- */
@@ -1546,6 +1667,10 @@
         warnings: warnings,
         instances: instances.length,
         edges: pairs.length,
+        shape: shape,
+        analyticShare: Math.round(analyticShare * 1000) / 1000,
+        tris: faces.reduce(function (a, f) { return a + f.tris; }, 0),
+        netSkipped: skipNet || '',
         ms: Math.round(((typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0))
       }
     };
