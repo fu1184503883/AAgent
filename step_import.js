@@ -1195,7 +1195,7 @@
       tris = refineTris(surf, tris, ctx.tol, ctx.maxLen, ctx.faceBudget, 4);
     }
 
-    var pos = [], verts = [], uvs = [], triN = [], area = 0, cx = 0, cy = 0, cz = 0, nx = 0, ny = 0, nz = 0;
+    var pos = [], verts = [], uvs = [], area = 0, cx = 0, cy = 0, cz = 0, nx = 0, ny = 0, nz = 0;
     var bmin = [Infinity, Infinity, Infinity], bmax = [-Infinity, -Infinity, -Infinity];
     var count = 0;
     for (var q3 = 0; q3 < tris.length; q3++) {
@@ -1223,8 +1223,7 @@
       var w3 = aTri * sgn;
       area += w3;
       cx += cen[0] * w3; cy += cen[1] * w3; cz += cen[2] * w3;
-      var un = mul(cr2, 1 / (aTri * 2));   // 单位几何法线：渲染时这个三角形的正面朝向
-      triN.push(un[0], un[1], un[2]);      // 顺手存下来，给下面定顶点法线符号用
+      var un = mul(cr2, 1 / (aTri * 2));   // 单位几何法线：仅用于面法线 / 凸凹特征
       nx += un[0] * w3; ny += un[1] * w3; nz += un[2] * w3;
       for (var w = 0; w < 3; w++) {
         pos.push(P[w][0], P[w][1], P[w][2]);
@@ -1252,24 +1251,37 @@
     }
     if (!same) normal = mul(normal, -1);
 
-    /* 逐顶点法线：曲面用解析法向，渲染端就能做 Gouraud 插值。
-     * 只给面法线的话，细分得再密也是一块块小平面（每块一个色），
-     * 「网格更细」在观感上等于没有收益 —— 这两件事必须一起做。 */
+    /* 逐顶点法线：给渲染端做 Gouraud 插值，曲面才显得连续光滑。
+     * 只给面法线的话，细分得再密也是一块块小平面（每块一个色）。
+     *
+     * 分两类曲面，各有各的坑：
+     *   ① 解析曲面（Plane/Cylinder/Cone/Sphere/Torus）：normalAt 是解析式
+     *      （圆柱就是 cos(u)x + sin(u)y 的径向），方向物理正确、绕整圈连续。
+     *      直接用它，符号统一对齐到面法线 normal 即可 —— normal 对圆柱/圆锥
+     *      是质心那一个角度的径向，与各点径向点积 = cos(Δu)，半圈内恒正，
+     *      不会把孔壁翻进材料里。
+     *   ② B 样条（kind==='BSpline'）：normalAt 是 ∂P/∂u × ∂P/∂v 的数值差分，
+     *      参数域折叠处符号会突变。若用它再逐三角形对齐符号，共享顶点上的
+     *      法线就会断裂（实测座椅件 2762 个面 180° 散布，着色明显条带/分块）。
+     *      改用「面内共享顶点聚合叉积」smooth normal：三角形先按面参考翻正
+     *      （消除折叠面里缠绕正负混杂的互相抵消），共享顶点累加未归一化的叉积
+     *      （长度=2×面积，面积天然当权重），最后归一化 —— 法线在共享顶点
+     *      必然连续，杜绝 180° 散布。
+     * 叉积只用于「法线」，不碰顶点顺序，area 的 uv 符号权重、gAAG 属性、
+     * 网络判定全部不受影响。 */
     var nrms = [];
-    if (surf.kind === 'Plane' || !surf.normalAt) {
+    if (surf.kind === 'Plane' || !verts.length) {
       for (var nv = 0; nv < verts.length; nv++) nrms.push(normal[0], normal[1], normal[2]);
-    } else {
-      /* 符号按「这个顶点所在的那个三角形」的几何法线定，不按整面定。
-       * 三种写法都试过，前两种在真实件上都会翻车：
-       *   ① 逐顶点跟面法线 normal 比 —— 圆柱上 normal 只是质心那一个角度的
-       *      径向，绕半圈点积自然为负，会把一半孔壁的法线翻进材料里；
-       *   ② 整面投票定一个符号 —— B 样条片体参数域折叠时，同一个面里三角形
-       *      缠绕正负各半（实测 4518 面件有 1225 个这样的面），投票必输一半。
-       * 三角形几何法线（triN，上面循环顺手存的单位叉积）就是渲染时真正的正面
-       * 朝向，逐顶点对齐它，dot(N, 正面) 恒 >= 0，绝不会出现背光黑面。
-       * 只改法线、不动顶点顺序：换顺序会改 area 的 uv 符号权重，进而改 gAAG
-       * 面属性与网络判定结果。法线值本身仍由 nCache 复用，平滑性不受影响。 */
-      var nCache = new Map();          // 缓存「未翻转」的解析法向，符号在输出时再定
+    } else if (surf.kind !== 'BSpline') {
+      /* 解析曲面（Cylinder/Cone/Sphere/Torus）：normalAt 是解析式（圆柱就是
+       * cos(u)x + sin(u)y 的径向），方向物理正确、绕整圈连续。符号只需定
+       * **一次全局方向**（朝外还是朝内），用 same 标志（STEP 的 SAME_SENSE）
+       * 就够了 —— 不能逐顶点跟面法线 normal 点积：normal 对圆柱只是质心那
+       * 一个角度的径向，绕半圈点积从 +1 变到 -1，会把一半孔壁翻进材料里。
+       * 面法线 normal 本身也是「质心 normalAt × same」，所以这里直接
+       * normalAt × (same?1:-1) 与它方向全局一致。 */
+      var nCache = new Map();
+      var sg = same ? 1 : -1;
       for (var nv2 = 0; nv2 < uvs.length; nv2++) {
         var uvq = uvs[nv2], nk = uvq[0] + '|' + uvq[1];
         var nnv = nCache.get(nk);
@@ -1277,10 +1289,40 @@
           nnv = surf.normalAt(uvq[0], uvq[1]) || normal;
           nCache.set(nk, nnv);
         }
-        var gi = Math.floor(nv2 / 3) * 3, sg = 1;
-        if (gi + 2 < triN.length &&
-            nnv[0] * triN[gi] + nnv[1] * triN[gi + 1] + nnv[2] * triN[gi + 2] < 0) sg = -1;
         nrms.push(nnv[0] * sg, nnv[1] * sg, nnv[2] * sg);
+      }
+    } else {
+      /* B 样条：聚合叉积 smooth normal。
+       * 关键：累加**未归一化的叉积**（叉积长度 = 2×三角形面积），面积天然当权重。
+       * 折叠面的耳切会产生大量「顶点几乎重合」的退化细长三角，它们的叉积方向
+       * 是数值噪声（三个点近似共线，叉积方向随机）；若先归一化成单位向量再累加，
+       * 这些噪声三角形和正常三角形等权，会把邻域法线搅乱（实测座椅件 7.5% 三角形
+       * 出现 30°~180° 的法线突变，着色就是明显的分块/条带）。用面积加权后，
+       * 退化三角形面积趋近 0，贡献自动消失，只剩正常三角形的平滑法线。 */
+      var nAcc = new Map();
+      var nRef = null;
+      for (var q4 = 0; q4 + 2 < verts.length; q4 += 3) {
+        var a = verts[q4], b = verts[q4 + 1], c = verts[q4 + 2];
+        var cr = cross(sub(b, a), sub(c, a));     // 叉积，长度 = 2×面积
+        var cl = vlen(cr);
+        if (cl < 1e-12) continue;
+        if (!nRef) { nRef = [cr[0] / cl, cr[1] / cl, cr[2] / cl]; }
+        else if (cr[0] * nRef[0] + cr[1] * nRef[1] + cr[2] * nRef[2] < 0) cr = mul(cr, -1);
+        for (var w2 = 0; w2 < 3; w2++) {
+          var vv = verts[q4 + w2];
+          var key = vv[0] + '|' + vv[1] + '|' + vv[2];
+          var acc2 = nAcc.get(key);
+          if (!acc2) { acc2 = [0, 0, 0]; nAcc.set(key, acc2); }
+          acc2[0] += cr[0]; acc2[1] += cr[1]; acc2[2] += cr[2];   // 累加原始叉积（面积加权）
+        }
+      }
+      for (var nv3 = 0; nv3 < verts.length; nv3++) {
+        var v3 = verts[nv3];
+        var acc3 = nAcc.get(v3[0] + '|' + v3[1] + '|' + v3[2]);
+        if (!acc3) { nrms.push(normal[0], normal[1], normal[2]); continue; }
+        var al = vlen(acc3);
+        if (al < 1e-12) { nrms.push(normal[0], normal[1], normal[2]); continue; }
+        nrms.push(acc3[0] / al, acc3[1] / al, acc3[2] / al);
       }
     }
 
