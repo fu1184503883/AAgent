@@ -1316,13 +1316,38 @@
           acc2[0] += cr[0]; acc2[1] += cr[1]; acc2[2] += cr[2];   // 累加原始叉积（面积加权）
         }
       }
+      /* 关键：把整面法线统一到几何朝向 normal（已含 same 校正）。
+       * 上面 nRef 用的是「面内第一个三角形」的叉积方向，跟 STEP 的 same_sense
+       * 几何定向无关 —— 相邻两个 B 样条 patch 可能一个朝外、一个朝内，符号随机。
+       * shader 是 abs() 双面光照，abs 只消除「单面内朝前/朝后」的差异，消不掉
+       * 「相邻面符号相反」造成的相对明暗差，于是出现粉/绿双色、接缝、连续面里
+       * 突兀一块异色。所以输出前用 normal 点积判一次整面符号，把 B 样条面也
+       * 对齐到跟解析曲面一致的正确外侧。 */
+      var bgDot = 0;
+      var nKeys = [];
       for (var nv3 = 0; nv3 < verts.length; nv3++) {
         var v3 = verts[nv3];
-        var acc3 = nAcc.get(v3[0] + '|' + v3[1] + '|' + v3[2]);
-        if (!acc3) { nrms.push(normal[0], normal[1], normal[2]); continue; }
+        var key3 = v3[0] + '|' + v3[1] + '|' + v3[2];
+        var acc3 = nAcc.get(key3);
+        if (!acc3) continue;
+        nKeys.push([nv3, acc3]);
+        bgDot += acc3[0] * normal[0] + acc3[1] * normal[1] + acc3[2] * normal[2];
+      }
+      var bg = bgDot < 0 ? -1 : 1;
+      var nrmLookup = new Map();
+      for (var nk2 = 0; nk2 < nKeys.length; nk2++) {
+        var item = nKeys[nk2];
+        var acc3 = item[1];
         var al = vlen(acc3);
-        if (al < 1e-12) { nrms.push(normal[0], normal[1], normal[2]); continue; }
-        nrms.push(acc3[0] / al, acc3[1] / al, acc3[2] / al);
+        var nx3, ny3, nz3;
+        if (al < 1e-12) { nx3 = normal[0]; ny3 = normal[1]; nz3 = normal[2]; }
+        else { nx3 = acc3[0] / al * bg; ny3 = acc3[1] / al * bg; nz3 = acc3[2] / al * bg; }
+        nrmLookup.set(item[0], [nx3, ny3, nz3]);
+      }
+      for (var nv4 = 0; nv4 < verts.length; nv4++) {
+        var got = nrmLookup.get(nv4);
+        if (!got) { nrms.push(normal[0], normal[1], normal[2]); continue; }
+        nrms.push(got[0], got[1], got[2]);
       }
     }
 
