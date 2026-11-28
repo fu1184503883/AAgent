@@ -552,7 +552,9 @@ window.addEventListener('error', function(e){
 });
 </script>
 <script src="data.js"></script>
+<script src="vendor/earcut.min.js"></script>
 <script src="step_import.js"></script>
+<script src="occ_display.js"></script>
 <script>
 "use strict";
 (function(){
@@ -660,6 +662,7 @@ window.addEventListener('error', function(e){
       badge.title = '本地导入：STEP 在浏览器内解析出真实 B-Rep，gAAG 属性按 AAGExtractor 口径构造，'
         + '再由 0.436M 参数的 AAGNet 权重在本页做前向（三任务：面语义 / 实例 / 底面）。'
         + '面数 ' + net.N + ' · 有向边 ' + net.E + ' · 构图 ' + net.msGraph + ' ms · 前向 ' + net.msFwd + ' ms'
+        + (p.diag && p.diag.displayMesh ? ' · 显示网格 OpenCASCADE(wasm) ' + p.diag.displayMs + ' ms' : '')
         + (caveat ? '。注意：' + caveat : '');
       badge.style.color = caveat ? '#ffe6b8' : '#bff0d0';
       badge.style.borderColor = caveat ? '#8f7a2f' : '#2f8f63';
@@ -693,7 +696,10 @@ window.addEventListener('error', function(e){
     const warn = (d.warnings || []).slice(0, 2);
     el.style.display = 'block';
 
-    let head = `浏览器内解析：${d.faces || p.faces.length} 面 · ${p.triangles} 三角面 · 单位 ${d.unit_mm || 1} mm · ${d.ms || 0} ms`;
+    let head = `浏览器内解析：${d.faces || p.faces.length} 面 · ${p.triangles} 三角面`
+      + (d.displayMesh ? '（OCC 显示网格）' : '')
+      + ` · 单位 ${d.unit_mm || 1} mm · ${d.ms || 0} ms`;
+    if (d.displayMesh) head += `<br><span style="opacity:.75">显示网格：OpenCASCADE wasm${d.occPath === 'worker' ? '（worker 并行）' : ''} · ${d.displayTris} 三角面 · ${d.displayMs} ms（面属性/gAAG 仍用本页解析）</span>`;
     let body;
     if (net){
       const inst = net.instances.length;
@@ -2263,22 +2269,50 @@ window.addEventListener('error', function(e){
       netMsg = (e && e.message) ? e.message : String(e);
     }
 
-    let part;
+    const emsg = (e) => ((e && e.message) ? e.message : String(e));
+
+    /* 读文件 → 决定显示网格引擎。
+     * 优先 Worker 并行（http/https）：OCC 在后台读 STEP + 网格化，主线程同时跑
+     * 自有解析（轻量模式，不算显示网格/法线）；file:// 下浏览器禁止 Worker，
+     * 退回串行（同样走轻量解析，省掉 ~7 s 的逐顶点法线）。 */
+    let part, text = '';
+    try { text = await file.text(); }
+    catch (e){ showImp('导入失败', '读取文件失败：' + escapeHtml(emsg(e)), true); return; }
+
+    let occt = null, occJob = null, occErr = '';
+    const workerOK = (typeof Worker !== 'undefined') && location.protocol !== 'file:';
+    if (window.OCC_DISPLAY && workerOK){
+      try { occJob = window.OCC_DISPLAY.begin(text); } catch (e){ occJob = null; }
+    }
+    if (window.OCC_DISPLAY && !occJob){
+      try {
+        showImp('导入本地 STEP', '载入 OpenCASCADE（wasm）显示网格引擎 …<br><span style="opacity:.7">首次约 7.6 MB，之后走缓存</span>');
+        await raf2();
+        occt = await window.OCC_DISPLAY.ensure();
+      } catch (e){ occErr = 'OCC 引擎加载失败：' + emsg(e); }
+    } else if (!window.OCC_DISPLAY){
+      occErr = 'OCC 引擎脚本未加载（occ_display.js 缺失）';
+    }
+    const useOcc = !!(occJob || occt);
+
+    let tqParam = null;
     try {
-      const text = await file.text();
       // 粗估规模：只数 ADVANCED_FACE 关键字，不做解析，46 MB 上也只要几十毫秒
       let guess = 0, at = 0;
       while ((at = text.indexOf('ADVANCED_FACE', at)) >= 0) { guess++; at += 13; }
       const big = guess > 1500 || text.length > 12 * 1024 * 1024;
-      // 时间常数来自实测（4518 面 / 152 万三角）：解析三角化 7.6 ms/面，构图+前向 2.2 ms/面
       const estParse = Math.max(1, Math.round(guess * 8 / 1000));
       const estNet = Math.max(1, Math.round(guess * 2.4 / 1000));
+      const estOcc = useOcc ? Math.max(1, Math.round(guess * 5.5 / 1000)) : 0;
+      /* 并行时总耗时 ≈ max(自有解析, OCC)；串行是相加 */
+      const estTotal = (occJob && estOcc) ? Math.max(estParse + estNet, estOcc) : (estParse + estNet + estOcc);
       const mb = (text.length / 1048576).toFixed(1);
       showImp('导入本地 STEP',
         (big
           ? `共约 <b>${guess}</b> 个面 · ${mb} MB —— 这是个大件。<br>`
-            + `预计：解析三角化 <b>约 ${estParse} 秒</b> + AAGNet 前向 <b>约 ${estNet} 秒</b>，`
-            + `合计 <b>${estParse + estNet} 秒</b> 上下。<br>`
+            + `预计：<b>约 ${estTotal} 秒</b>（解析三角化 ≈${estParse} s + AAGNet 前向 ≈${estNet} s`
+            + (estOcc ? ` + OCC 显示网格 ≈${estOcc} s${occJob ? '，与解析并行' : ''}` : '')
+            + `）。<br>`
             + `<span style="color:#ffd58a">这段时间页面会完全没响应（单线程算），属正常现象：`
             + `请勿关闭标签页、勿重复点击导入，跑完自动出结果。</span><br>`
           : '')
@@ -2287,13 +2321,64 @@ window.addEventListener('error', function(e){
       await raf2();
       /* ?tess=0 关掉曲面细分、?tess=2 加密一倍：留给 A/B 对比和低配机器兜底 */
       const tq = new URLSearchParams(location.search).get('tess');
-      part = window.AAG_STEP.buildPart(text, file.name, { tess: tq === null ? 1 : Number(tq) });
+      tqParam = tq !== null ? Number(tq) : null;
+      /* 有 OCC 显示网格时走轻量模式：只算面属性/gAAG/网络，不产出显示网格与
+       * 逐顶点法线（省 ~7 s）；没有 OCC 时交给默认精度自适应 */
+      part = window.AAG_STEP.buildPart(text, file.name, {
+        display: !useOcc,
+        /* 有 OCC 时固定 1 档：显示网格不靠它，精度档别乱升（属性口径也对齐旧版） */
+        tess: tqParam !== null ? tqParam : (useOcc ? 1 : undefined)
+      });
     } catch (e){
-      showImp('导入失败', escapeHtml(e && e.message ? e.message : String(e)) +
+      showImp('导入失败', escapeHtml(emsg(e)) +
         '<br><span style="opacity:.65">若来自 CATIA / NX / SolidWorks，导出时请选「AP214 或 AP242 实体」文本 STEP；' +
         '加密、压缩或二进制格式无法解析。</span>', true);
       return;
     }
+
+    /* 拿 OCC 的三角化替换显示网格（面属性 / gAAG / 网络结果都还是我们自己的） */
+    let om = null;
+    if (occJob){
+      try {
+        showImp('导入本地 STEP', '自有解析完成，等 OpenCASCADE 三角化收尾（后台并行中）…');
+        await raf2();
+        occJob.sendFaces(part);
+        om = await occJob.result;
+        part.diag.occPath = 'worker';
+      } catch (e){
+        occErr = 'OCC 并行三角化失败：' + emsg(e) + '，改用串行路径重试';
+        occJob = null;
+      }
+    }
+    if (!om && !occJob && window.OCC_DISPLAY && text && !part._pos){
+      try {
+        if (!occt) occt = await window.OCC_DISPLAY.ensure();
+        showImp('导入本地 STEP', 'OpenCASCADE 三角化中（显示网格；面属性与 gAAG 仍用本页解析）…');
+        await raf2();
+        om = window.OCC_DISPLAY.merge(part, text, occt);
+        part.diag.occPath = part.diag.occPath || 'serial';
+      } catch (e){
+        occErr = 'OCC 显示网格失败：' + emsg(e);
+      }
+    }
+    if (om && om.tris > 0){
+      part._pos = om.pos;
+      part._nrm = om.nrm;
+      part.faceids = om.fids;
+      part.triangles = om.tris;
+      part.diag.displayMesh = 'OCC';
+      part.diag.displayMs = om.ms;
+      part.diag.displayTris = om.tris;
+      part.diag.occMatch = om.match;
+    } else if (!part._pos){
+      /* OCC 全线失败：轻量解析没有显示网格，完整重建一份自有网格 */
+      part = window.AAG_STEP.buildPart(text, file.name, {
+        tess: tqParam !== null ? tqParam : undefined
+      });
+      occErr = (occErr ? occErr + '；' : '') + '已回落到自有三角化（完整重建）';
+    }
+    if (occErr) part.diag.warnings = (part.diag.warnings || []).concat(occErr);
+
     // 规则识别给出的实例先记下来当兜底，再用网络结果覆盖
     part._ruleCount = part.instances.length;
     const nn = part.nn;
@@ -2323,7 +2408,9 @@ window.addEventListener('error', function(e){
       ? ((part._net.caveat ? ' · 网络（域外参考）' : ' · 网络')
          + ' ' + part.instances.length + ' 实例 / ' + part._net.msFwd + ' ms')
       : ' · 规则兜底（网络未参与）';
-    toast('已导入 ' + part.faces.length + ' 面' + tail + (d.ms ? (' · 解析 ' + d.ms + ' ms') : ''));
+    toast('已导入 ' + part.faces.length + ' 面' + tail
+      + (d.displayMesh ? (' · 显示 OCC ' + d.displayMs + ' ms') : '')
+      + (d.ms ? (' · 解析 ' + d.ms + ' ms') : ''));
   }
 
   /* AAGNet 三件套按需加载：模型 → 推理器 → 权重（2.2 MB）。

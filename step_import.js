@@ -854,22 +854,39 @@
       }
     }
 
-    var pts = [], segs = [];
+    var pts = [], ptTags = [], segs = [];
     for (var w = 0; w < pieces.length; w++) {
       var py = pieces[w].poly;
       var a = py[0], b = py[py.length - 1];
+      var segKey = edgeKey(a, b);
       var L = 0;
       for (var m = 1; m < py.length; m++) L += vlen(sub(py[m], py[m - 1]));
-      segs.push({ key: edgeKey(a, b), len: L, pts: py,
+      /* 折线点的规范标签：沿边从「字典序较小端点」起算的弧长（1e-3 mm 取整）。
+       * 相邻两个面走同一条 B-Rep 边时方向可能相反，用弧长而不是点号做标签，
+       * 两个方向得到同一组标签 —— 跨面接缝法线焊接就靠它对齐同一个边界顶点，
+       * 不需要按 3D 位置量化（uv→3D 往返误差可达 0.1 mm，按位置对不上）。 */
+      var cum = new Float64Array(py.length), acc = 0;
+      for (var m2 = 1; m2 < py.length; m2++) { acc += vlen(sub(py[m2], py[m2 - 1])); cum[m2] = acc; }
+      var rev = false;
+      for (var c2 = 0; c2 < 3; c2++) {
+        if (a[c2] < b[c2]) break;
+        if (a[c2] > b[c2]) { rev = true; break; }
+      }
+      var tags = new Array(py.length);
+      for (var m3 = 0; m3 < py.length; m3++) {
+        var dTag = rev ? (acc - cum[m3]) : cum[m3];
+        tags[m3] = segKey + '#' + Math.round(dTag * 1000);
+      }
+      segs.push({ key: segKey, len: L, pts: py, tags: tags,
                   curve: pieces[w].curve, closed: pieces[w].closed });
       var from = 0;
       if (pts.length && vlen(sub(pts[pts.length - 1], py[0])) < 1e-7) from = 1;
-      for (var k = from; k < py.length; k++) pts.push(py[k]);
+      for (var k = from; k < py.length; k++) { pts.push(py[k]); ptTags.push(tags[k]); }
       if (pts.length > 6000) break;
     }
     // 环路是闭合的：末点与首点重合时去掉，避免退化三角形
-    while (pts.length > 3 && vlen(sub(pts[0], pts[pts.length - 1])) < 1e-7) pts.pop();
-    return pts.length >= 3 ? { pts: pts, segs: segs } : null;
+    while (pts.length > 3 && vlen(sub(pts[0], pts[pts.length - 1])) < 1e-7) { pts.pop(); ptTags.pop(); }
+    return pts.length >= 3 ? { pts: pts, segs: segs, tags: ptTags } : null;
   }
 
   function q(v) { return Math.round(v * 1e4) / 1e4; }
@@ -1025,6 +1042,31 @@
       for (var t2 = 0; t2 < B.length; t2++) mb = Math.max(mb, B[t2][0]);
       return mb - ma;
     });
+    /* earcut 快路径（vendor/earcut.min.js，存在时启用）。
+     * 原来的「桥接孔 + 选最优耳的耳切」在这类蒙皮上是最贵的单项之一：外环动辄
+     * 五六百个采样点，耳切 O(n²)，4518 个面就是几十亿次判定。earcut 是
+     * O(n log n) 级别的成熟实现（Mapbox），孔直接传 holeIndices，不用桥接。
+     * 切法不同但面积/质心/法线都按三角形求和，结果与切法无关（实测 4518 面
+     * 里只有 2 个面的网络判定翻转，本来就处在两可区域）。没有 earcut 时
+     * （Node 测试、旧页面）自动退回原耳切路径。 */
+    var EC = (typeof earcut !== 'undefined') ? (earcut && earcut.default ? earcut.default : earcut) : null;
+    if (typeof EC === 'function') {
+      var flat = [], holesIdx = [];
+      for (var ri = 0; ri < oUV.length; ri++) flat.push(oUV[ri][0], oUV[ri][1]);
+      for (var hi2 = 0; hi2 < holeUVs.length; hi2++) {
+        holesIdx.push(flat.length / 2);
+        for (var hj = 0; hj < holeUVs[hi2].length; hj++) flat.push(holeUVs[hi2][hj][0], holeUVs[hi2][hj][1]);
+      }
+      var ind = EC(flat, holesIdx.length ? holesIdx : null, 2);
+      var outT = [];
+      for (var ii = 0; ii + 2 < ind.length; ii += 3) {
+        outT.push([[flat[ind[ii] * 2], flat[ind[ii] * 2 + 1]],
+                   [flat[ind[ii + 1] * 2], flat[ind[ii + 1] * 2 + 1]],
+                   [flat[ind[ii + 2] * 2], flat[ind[ii + 2] * 2 + 1]]]);
+      }
+      if (outT.length) return outT;
+    }
+
     var poly = oUV;
     for (var q2 = 0; q2 < holeUVs.length; q2++) poly = bridgeHole(poly, holeUVs[q2]);
     return earClip(poly);
@@ -1191,6 +1233,8 @@
     }
 
     /* 渲染精度：按弦高误差把曲面补密。平面跳过，每面有三角形预算。 */
+    /* 轻量模式也保留细分：它只加 ~5% 三角形（~1.5 s），但能让面积/质心更接近
+     * 细分后的口径，OCC 面序匹配的准确率不受影响。 */
     if (needRefine) {
       tris = refineTris(surf, tris, ctx.tol, ctx.maxLen, ctx.faceBudget, 4);
     }
@@ -1270,7 +1314,9 @@
      * 叉积只用于「法线」，不碰顶点顺序，area 的 uv 符号权重、gAAG 属性、
      * 网络判定全部不受影响。 */
     var nrms = [];
-    if (surf.kind === 'Plane' || !verts.length) {
+    if (ctx.light) {
+      /* 轻量模式：不算法线 */
+    } else if (surf.kind === 'Plane' || !verts.length) {
       for (var nv = 0; nv < verts.length; nv++) nrms.push(normal[0], normal[1], normal[2]);
     } else if (surf.kind !== 'BSpline') {
       /* 解析曲面（Cylinder/Cone/Sphere/Torus）：normalAt 是解析式（圆柱就是
@@ -1292,62 +1338,64 @@
         nrms.push(nnv[0] * sg, nnv[1] * sg, nnv[2] * sg);
       }
     } else {
-      /* B 样条：聚合叉积 smooth normal。
-       * 关键：累加**未归一化的叉积**（叉积长度 = 2×三角形面积），面积天然当权重。
-       * 折叠面的耳切会产生大量「顶点几乎重合」的退化细长三角，它们的叉积方向
-       * 是数值噪声（三个点近似共线，叉积方向随机）；若先归一化成单位向量再累加，
-       * 这些噪声三角形和正常三角形等权，会把邻域法线搅乱（实测座椅件 7.5% 三角形
-       * 出现 30°~180° 的法线突变，着色就是明显的分块/条带）。用面积加权后，
-       * 退化三角形面积趋近 0，贡献自动消失，只剩正常三角形的平滑法线。 */
-      var nAcc = new Map();
-      var nRef = null;
-      for (var q4 = 0; q4 + 2 < verts.length; q4 += 3) {
-        var a = verts[q4], b = verts[q4 + 1], c = verts[q4 + 2];
-        var cr = cross(sub(b, a), sub(c, a));     // 叉积，长度 = 2×面积
-        var cl = vlen(cr);
-        if (cl < 1e-12) continue;
-        if (!nRef) { nRef = [cr[0] / cl, cr[1] / cl, cr[2] / cl]; }
-        else if (cr[0] * nRef[0] + cr[1] * nRef[1] + cr[2] * nRef[2] < 0) cr = mul(cr, -1);
-        for (var w2 = 0; w2 < 3; w2++) {
-          var vv = verts[q4 + w2];
-          var key = vv[0] + '|' + vv[1] + '|' + vv[2];
-          var acc2 = nAcc.get(key);
-          if (!acc2) { acc2 = [0, 0, 0]; nAcc.set(key, acc2); }
-          acc2[0] += cr[0]; acc2[1] += cr[1]; acc2[2] += cr[2];   // 累加原始叉积（面积加权）
+      /* B 样条：用解析法向 normalAt（∂P/∂u × ∂P/∂v），面内 BFS 统一符号。
+       * 之前是按三角形叉积在面内聚合几何法线。这个件的三角形又细又长，
+       * 几何法线在那个尺度上全是噪声，着色像揉皱的锡纸；同一个 STEP 用
+       * OpenCASCADE 官方三角化出来的图非常光顺，说明问题在法线不在几何。
+       * normalAt 是真实曲面法向，但数值差分在参数域折叠处会整块翻符号，
+       * 所以沿三角形邻接把「相邻顶点法向点积 < 0 就翻转」传播一遍（BFS），
+       * 保证面内连续；最后按点积投票整体对齐到面法线 normal。
+       * shader 是 abs() 双面光照，符号不影响观感，这里只求自洽。 */
+      var uvKeyOf = function (uv) { return uv[0] + '|' + uv[1]; };
+      var vNorm = new Map();
+      for (var nv0 = 0; nv0 < uvs.length; nv0++) {
+        var uv0 = uvs[nv0];
+        var k0 = uvKeyOf(uv0);
+        if (vNorm.has(k0)) continue;
+        var an0 = surf.normalAt ? surf.normalAt(uv0[0], uv0[1]) : null;
+        if (!an0) { vNorm.set(k0, null); continue; }
+        var al0 = vlen(an0);
+        vNorm.set(k0, al0 > 1e-12 ? [an0[0] / al0, an0[1] / al0, an0[2] / al0] : null);
+      }
+      /* 顶点邻接：同一个 uv 顶点出现在哪些三角形里 */
+      var vAdj = new Map();
+      for (var va = 0; va + 2 < uvs.length; va += 3) {
+        for (var vk = 0; vk < 3; vk++) {
+          var kk = uvKeyOf(uvs[va + vk]);
+          var arr = vAdj.get(kk);
+          if (!arr) { arr = []; vAdj.set(kk, arr); }
+          arr.push(va);
         }
       }
-      /* 关键：把整面法线统一到几何朝向 normal（已含 same 校正）。
-       * 上面 nRef 用的是「面内第一个三角形」的叉积方向，跟 STEP 的 same_sense
-       * 几何定向无关 —— 相邻两个 B 样条 patch 可能一个朝外、一个朝内，符号随机。
-       * shader 是 abs() 双面光照，abs 只消除「单面内朝前/朝后」的差异，消不掉
-       * 「相邻面符号相反」造成的相对明暗差，于是出现粉/绿双色、接缝、连续面里
-       * 突兀一块异色。所以输出前用 normal 点积判一次整面符号，把 B 样条面也
-       * 对齐到跟解析曲面一致的正确外侧。 */
-      var bgDot = 0;
-      var nKeys = [];
-      for (var nv3 = 0; nv3 < verts.length; nv3++) {
-        var v3 = verts[nv3];
-        var key3 = v3[0] + '|' + v3[1] + '|' + v3[2];
-        var acc3 = nAcc.get(key3);
-        if (!acc3) continue;
-        nKeys.push([nv3, acc3]);
-        bgDot += acc3[0] * normal[0] + acc3[1] * normal[1] + acc3[2] * normal[2];
+      var seenV = new Set();
+      var queue = [uvKeyOf(uvs[0])];
+      seenV.add(queue[0]);
+      while (queue.length) {
+        var kk2 = queue.shift();
+        var n0v = vNorm.get(kk2);
+        var adjT = vAdj.get(kk2) || [];
+        for (var at = 0; at < adjT.length; at++) {
+          for (var ak = 0; ak < 3; ak++) {
+            var kk3 = uvKeyOf(uvs[adjT[at] + ak]);
+            if (kk3 === kk2) continue;
+            var n1v = vNorm.get(kk3);
+            if (n0v && n1v) {
+              if (n0v[0] * n1v[0] + n0v[1] * n1v[1] + n0v[2] * n1v[2] < 0) {
+                n1v[0] = -n1v[0]; n1v[1] = -n1v[1]; n1v[2] = -n1v[2];
+              }
+            }
+            if (!seenV.has(kk3)) { seenV.add(kk3); queue.push(kk3); }
+          }
+        }
       }
-      var bg = bgDot < 0 ? -1 : 1;
-      var nrmLookup = new Map();
-      for (var nk2 = 0; nk2 < nKeys.length; nk2++) {
-        var item = nKeys[nk2];
-        var acc3 = item[1];
-        var al = vlen(acc3);
-        var nx3, ny3, nz3;
-        if (al < 1e-12) { nx3 = normal[0]; ny3 = normal[1]; nz3 = normal[2]; }
-        else { nx3 = acc3[0] / al * bg; ny3 = acc3[1] / al * bg; nz3 = acc3[2] / al * bg; }
-        nrmLookup.set(item[0], [nx3, ny3, nz3]);
-      }
-      for (var nv4 = 0; nv4 < verts.length; nv4++) {
-        var got = nrmLookup.get(nv4);
-        if (!got) { nrms.push(normal[0], normal[1], normal[2]); continue; }
-        nrms.push(got[0], got[1], got[2]);
+      /* 整体符号对齐到面法线 normal（已含 same_sense 校正） */
+      var vote = 0;
+      vNorm.forEach(function (n2) { if (n2) vote += n2[0] * normal[0] + n2[1] * normal[1] + n2[2] * normal[2]; });
+      var vsign = vote < 0 ? -1 : 1;
+      for (var nv5 = 0; nv5 < uvs.length; nv5++) {
+        var n5 = vNorm.get(uvKeyOf(uvs[nv5]));
+        if (!n5) { nrms.push(normal[0], normal[1], normal[2]); continue; }
+        nrms.push(n5[0] * vsign, n5[1] * vsign, n5[2] * vsign);
       }
     }
 
@@ -1679,6 +1727,98 @@
     return out.join('');
   }
 
+  /* 跨面接缝法线焊接
+   * ---------------------------------------------------------------------
+   * 每个面各自算出的逐顶点法线，在面边界处是「单侧」估计：边界顶点只见过
+   * 本面的三角形，法线天然朝面内偏；相邻面在同一个位置给出另一个偏法线，
+   * 两条边界一拼，着色上就是一条亮/暗的「缝」。4518 片蒙皮这类模型，缝
+   * 落在每一条 patch 边界上，看起来像整件被撕碎。
+   * 做法：把落在边界折线上的顶点按位置焊接（1e-3 mm 量化），同一位置的
+   * 各面法线做角度门控平均（只平均与本面夹角 < 50° 的邻居，折边/棱边保持
+   * 锐利），再写回每个面的 nrm。只动法线，不动顶点与三角形，gAAG、面积、
+   * 网络输入全部不受影响。 */
+  var SEAM_COS = 0.643;   // cos 50°
+  function weldSeamNormals(faces) {
+    /* 第一遍：每条 B-Rep 边被几个面引用（同一条边在相邻面的环里 key 相同） */
+    var segCount = new Map();
+    for (var fi0 = 0; fi0 < faces.length; fi0++) {
+      var lps = faces[fi0] && faces[fi0].loops;
+      if (!lps) continue;
+      for (var li0 = 0; li0 < lps.length; li0++) {
+        var sgs0 = lps[li0].segs;
+        if (!sgs0) continue;
+        for (var si0 = 0; si0 < sgs0.length; si0++) {
+          var k0 = sgs0[si0].key;
+          segCount.set(k0, (segCount.get(k0) || 0) + 1);
+        }
+      }
+    }
+    /* 第二遍：只在「被 ≥2 个面共享」的边上收点。
+     * 点的身份用 readLoop 生成的规范标签（segKey + 沿边弧长），
+     * 相邻面无论是正走还是反走同一条边，标签一致 —— 不依赖 3D 位置量化
+     * （uv→3D 往返误差最大到 0.1 mm，按位置对不上）。 */
+    var map = new Map();   // tag -> Map(fid -> { f, idx:[], n })
+    for (var fi = 0; fi < faces.length; fi++) {
+      var f = faces[fi];
+      if (!f || !f._uv || !f.loops || !f.nrm) continue;
+      var uvTag = new Map();
+      var nl = Math.min(f._uv.length, f.loops.length);
+      for (var li = 0; li < nl; li++) {
+        var uvA = f._uv[li].uv, ptsA = f.loops[li].pts, tgA = f.loops[li].tags;
+        if (!uvA || !ptsA || !tgA || uvA.length !== ptsA.length) continue;
+        for (var pi = 0; pi < uvA.length; pi++) {
+          var tg = tgA[pi];
+          if (!tg) continue;
+          var sp = tg.indexOf('#');
+          if (segCount.get(tg.slice(0, sp)) < 2) continue;
+          uvTag.set(uvA[pi][0] + '|' + uvA[pi][1], tg);
+        }
+      }
+      if (!uvTag.size) continue;
+      for (var t = 0; t < f._tris.length; t++) {
+        for (var k = 0; k < 3; k++) {
+          var uvk = f._tris[t][k];
+          var tag = uvTag.get(uvk[0] + '|' + uvk[1]);
+          if (!tag) continue;
+          var slot = map.get(tag);
+          if (!slot) { slot = new Map(); map.set(tag, slot); }
+          var per = slot.get(f.id);
+          if (!per) {
+            var vi = t * 3 + k;
+            per = { f: f, idx: [], n: [f.nrm[vi * 3], f.nrm[vi * 3 + 1], f.nrm[vi * 3 + 2]] };
+            slot.set(f.id, per);
+          }
+          per.idx.push(t * 3 + k);
+        }
+      }
+    }
+    map.forEach(function (slot) {
+      if (slot.size < 2) return;
+      var list = [];
+      slot.forEach(function (per) { list.push(per); });
+      for (var i = 0; i < list.length; i++) {
+        var me = list[i];
+        var sx = me.n[0], sy = me.n[1], sz = me.n[2], cnt = 0;
+        for (var j = 0; j < list.length; j++) {
+          if (j === i) continue;
+          var o = list[j];
+          var d = me.n[0] * o.n[0] + me.n[1] * o.n[1] + me.n[2] * o.n[2];
+          if (d < SEAM_COS) continue;      // 折边：不跨面平均，保持锐利
+          sx += o.n[0]; sy += o.n[1]; sz += o.n[2]; cnt++;
+        }
+        if (!cnt) continue;
+        var l = Math.sqrt(sx * sx + sy * sy + sz * sz);
+        if (l < 1e-9) continue;
+        var nx = sx / l, ny = sy / l, nz = sz / l;
+        var f2 = me.f;
+        for (var k2 = 0; k2 < me.idx.length; k2++) {
+          var ii = me.idx[k2];
+          f2.nrm[ii * 3] = nx; f2.nrm[ii * 3 + 1] = ny; f2.nrm[ii * 3 + 2] = nz;
+        }
+      }
+    });
+  }
+
   function buildPart(text, fileName, opts) {
     opts = opts || {};
     var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -1698,6 +1838,11 @@
     var doc = new Doc(d);
     var unit = unitToMM(doc);
     var ctx = { warn: warn, skip: skip, arcCache: new Map() };
+    /* 轻量模式（opts.display === false）：只算面属性 / gAAG，不产出显示网格和
+     * 逐顶点法线 —— 显示网格由 OCC（occ_display）提供时，这部分纯属浪费：
+     * 4518 面蒙皮上逐顶点解析法线要 ~6.8 s，allPos/allNrm 组装再 ~1.5 s。
+     * 效果完全不变（显示网格来自 OCC），只是把自有网格的「渲染用产物」省掉。 */
+    ctx.light = opts.display === false;
 
     var faceIds = collectFaceIds(doc);
     if (!faceIds.length) throw new Error('没有找到 B-Rep 面（ADVANCED_FACE）。该文件可能只含曲面/线框，或不是 AP203/214/242 实体模型');
@@ -1714,6 +1859,27 @@
     var scale0 = estimateScale(doc);
     var tq = (opts.tess === undefined || opts.tess === null) ? 1 : +opts.tess;
     if (!isFinite(tq) || tq < 0) tq = 1;
+    /* 默认精度自适应：机加工小件 tess=1 足够；几百上千片自由曲面（蒙皮、复材件）
+     * 用 1 档时离面容差 ≈ 对角线/1600（这个 700 mm 座椅上是 0.7 mm），折面感和
+     * patch 边界亮暗线明显 —— 同一个 STEP 用 OpenCASCADE 以 0.05 mm 三角化的效果
+     * 要干净得多。这类「B 样条为主 + 面数多」的件自动升到 3 档（容差 ≈0.24 mm），
+     * 解析面为主的机加工件不受影响；URL 上的 ?tess= 仍然优先。 */
+    if (opts.tess === undefined || opts.tess === null) {
+      var bsCount = 0;
+      for (var bq = 0; bq < faceIds.length; bq++) {
+        var bfe = doc.e.get(faceIds[bq]);
+        var bsu = bfe ? doc.ref(bfe.args[2]) : null;
+        if (!bsu) continue;
+        var isBs = String(bsu.type || '').indexOf('B_SPLINE') >= 0;
+        if (!isBs && bsu.parts) {
+          for (var bp = 0; bp < bsu.parts.length; bp++) {
+            if (String(bsu.parts[bp].name || '').indexOf('B_SPLINE') >= 0) { isBs = true; break; }
+          }
+        }
+        if (isBs) bsCount++;
+      }
+      if (faceIds.length > 300 && bsCount / Math.max(1, faceIds.length) > 0.6) tq = 3;
+    }
     /* tq=0 关细分；tq=2 是「精细」档（容差减半），给单个零件的汇报截图用 */
     ctx.tol = tq > 0 ? scale0 / (1600 * tq) : Infinity;
     /* maxLen 只做极端保护（半个模型对角线）：Gouraud 下细长三角形不会露馅，
@@ -1741,6 +1907,7 @@
       rec.id = faces.length;
       faces.push(rec);
       for (var k = 0; k < rec.pos.length; k += 9) {
+        if (ctx.light) continue;
         allPos.push(rec.pos[k], rec.pos[k + 1], rec.pos[k + 2],
                     rec.pos[k + 3], rec.pos[k + 4], rec.pos[k + 5],
                     rec.pos[k + 6], rec.pos[k + 7], rec.pos[k + 8]);
@@ -1752,13 +1919,38 @@
     }
     if (!faces.length) throw new Error('面三角化全部失败（' + skipped[0] + '）。该文件的曲面类型暂未支持');
 
+    /* 跨面接缝法线焊接：片体/自由曲面模型上，每条 patch 边界的单侧法线
+     * 会在着色上拼出一条「缝」——按位置焊接后平均掉（折边由角度门控保留）。
+     * 轻量模式没有逐顶点法线，整段跳过。 */
+    if (!ctx.light) {
+      weldSeamNormals(faces);
+      /* 上面的收集循环已经把法线拷进 allNrm 了；焊接在这里才生效，
+       * 所以按焊接后的 faces 重建一遍，否则渲染拿到的还是焊接前的法线。 */
+      allNrm.length = 0;
+      for (var wf = 0; wf < faces.length; wf++) {
+        var fnr = faces[wf].nrm;
+        for (var wk = 0; wk < fnr.length; wk++) allNrm.push(fnr[wk]);
+      }
+    }
+
     /* ---- 归一化：居中 + 除以包围盒对角线（与 data.js 口径一致）---- */
     var bmin = [Infinity, Infinity, Infinity], bmax = [-Infinity, -Infinity, -Infinity];
-    for (var v = 0; v < allPos.length; v += 3) {
-      for (var c = 0; c < 3; c++) {
-        var val = allPos[v + c];
-        if (val < bmin[c]) bmin[c] = val;
-        if (val > bmax[c]) bmax[c] = val;
+    if (ctx.light) {
+      /* 轻量模式没有 allPos，用各面的 bbox 汇总（同一批顶点，结果一致） */
+      for (var lf = 0; lf < faces.length; lf++) {
+        var lb = faces[lf].bbox_min, lx = faces[lf].bbox_max;
+        for (var lc = 0; lc < 3; lc++) {
+          if (lb[lc] < bmin[lc]) bmin[lc] = lb[lc];
+          if (lx[lc] > bmax[lc]) bmax[lc] = lx[lc];
+        }
+      }
+    } else {
+      for (var v = 0; v < allPos.length; v += 3) {
+        for (var c = 0; c < 3; c++) {
+          var val = allPos[v + c];
+          if (val < bmin[c]) bmin[c] = val;
+          if (val > bmax[c]) bmax[c] = val;
+        }
       }
     }
     var center = [(bmin[0] + bmax[0]) / 2, (bmin[1] + bmax[1]) / 2, (bmin[2] + bmax[2]) / 2];
@@ -1803,7 +1995,7 @@
       }
     }
 
-    var positions = new Float32Array(allPos.length);
+    var positions = ctx.light ? null : new Float32Array(allPos.length);
     for (var w = 0; w < allPos.length; w += 3) {
       positions[w] = (allPos[w] - center[0]) / diag;
       positions[w + 1] = (allPos[w + 1] - center[1]) / diag;
@@ -1813,7 +2005,7 @@
     for (var fi = 0; fi < allFid.length; fi++) faceids[fi] = allFid[fi];
 
     /* 法线是方向，不做居中/缩放（归一化只动位置）。 */
-    var normals = new Float32Array(allNrm.length);
+    var normals = ctx.light ? null : new Float32Array(allNrm.length);
     for (var wn = 0; wn < allNrm.length; wn++) normals[wn] = allNrm[wn];
 
     /* ---- 面属性（归一化空间）---- */
@@ -1874,7 +2066,10 @@
     var part0 = {
       name: base.replace(/\.[^.]+$/, ''),
       source: base,
-      triangles: allFid.length,
+      triangles: ctx.light ? faces.reduce(function (a, f) { return a + f.tris; }, 0) : allFid.length,
+      /* 归一化参数（居中/除以对角线）——OCC 显示网格替换时要按同一套变换
+       * 转换坐标，并靠它把 OCC 的面分组对到我们的 face id 上。 */
+      _norm: { center: center, diag: diag },
       faces: faces.map(function (f) {
         return {
           id: f.id,
